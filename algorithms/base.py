@@ -2,13 +2,14 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import numpy as np
+import numpy.typing as np_typing
 import pandas as pd
 
 
 class WhatIFAlgorithm(ABC):
     """Abstract class for what if algorithms"""
 
-    # proerties
+    # properties
 
     @abstractmethod
     def fit(self, df: pd.DataFrame, labels: dict):
@@ -16,7 +17,7 @@ class WhatIFAlgorithm(ABC):
 
         Args:
             df (pd.DataFrame): data dataframe
-            labels (dict): labels for unit, time, metric, action, and covaraite
+            labels (dict): labels for unit, time, metric, action, and covariate
 
         """
 
@@ -55,7 +56,7 @@ class FillTensorBase(ABC):
         self._tensor_shape = shape_
 
     @abstractmethod
-    def fill_tensor(self, Y: np.typing.NDArray[Any]) -> np.typing.NDArray[Any]:
+    def fill_tensor(self, Y: np_typing.NDArray[Any]) -> np_typing.NDArray[Any]:
         """take sparse tensor and return a full tensor
 
         Args:
@@ -67,8 +68,8 @@ class FillTensorBase(ABC):
 
     @abstractmethod
     def update_estimate(
-        self, values: np.typing.NDArray[Any], coords: np.typing.NDArray[Any]
-    ) -> np.typing.NDArray[Any]:
+        self, values: np_typing.NDArray[Any], coords: np_typing.NDArray[Any]
+    ) -> np_typing.NDArray[Any]:
         """update estimate given new observations
 
         Args:
