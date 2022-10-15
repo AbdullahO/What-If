@@ -1,4 +1,6 @@
 from abc import ABC, abstractmethod
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -53,7 +55,7 @@ class FillTensorBase(ABC):
         self._tensor_shape = shape_
 
     @abstractmethod
-    def fill_tensor(self, Y: np.array) -> np.array:
+    def fill_tensor(self, Y: np.typing.NDArray[Any]) -> np.typing.NDArray[Any]:
         """take sparse tensor and return a full tensor
 
         Args:
@@ -64,7 +66,9 @@ class FillTensorBase(ABC):
         """
 
     @abstractmethod
-    def update_estimate(self, values: np.array, coords: np.array) -> np.array:
+    def update_estimate(
+        self, values: np.typing.NDArray[Any], coords: np.typing.NDArray[Any]
+    ) -> np.typing.NDArray[Any]:
         """update estimate given new observations
 
         Args:
