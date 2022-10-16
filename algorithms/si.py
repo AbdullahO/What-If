@@ -9,6 +9,7 @@ import algorithms.base as base
 # 3. Consider moving to dask or xarray where appropriate
 # https://examples.dask.org/dataframes/03-from-pandas-to-dask.html#Gotcha’s-from-Pandas-to-Dask
 
+
 class SI(base.WhatIFAlgorithm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

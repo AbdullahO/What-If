@@ -6,11 +6,12 @@ import warnings
 import random
 import numpy as np
 import networkx as nx
-from networkx.algorithms.clique import find_cliques # type: ignore
-from sklearn.utils import check_array # type: ignore
+from networkx.algorithms.clique import find_cliques  # type: ignore
+from sklearn.utils import check_array  # type: ignore
 from algorithms.base import WhatIFAlgorithm, FillTensorBase
 
 # https://github.com/deshen24/syntheticNN
+
 
 class SyntheticNearestNeighbors:
     """
