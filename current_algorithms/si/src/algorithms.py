@@ -1,13 +1,8 @@
 import numpy as np
 
+from src.matrix import approximate_rank, approximate_rank_donoho, center_data, hsvt
+from src.regression import linear_regression
 
-from src.matrix import(
-    center_data, 
-    approximate_rank, 
-    approximate_rank_donoho, 
-    hsvt
-)
-from src.regression import linear_regression, lasso, ridge
 
 # HSVT + OLS
 def hsvt_ols(
@@ -23,8 +18,6 @@ def hsvt_ols(
     include_pre=True,
     method="spectral_energy",
     return_coefficients=False,
-    use_lasso=False,
-    use_ridge=False,
 ):
     """
     Input:
@@ -69,12 +62,7 @@ def hsvt_ols(
     X2_hat, u2, s2, v2 = hsvt(X2, rank=k2, return_all=True)
 
     # learn synthetic control via linear regression
-    if use_lasso:
-        beta = lasso(X1_hat, y1)
-    elif use_ridge:
-        beta = ridge(X1_hat, y1)
-    else:
-        beta = linear_regression(X1_hat, y1, rcond=rcond)
+    beta = linear_regression(X1_hat, y1, rcond=rcond)
 
     # forecast counterfactuals
     y2 = X2_hat.dot(beta).T

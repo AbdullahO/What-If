@@ -1,14 +1,9 @@
 import numpy as np
 import pandas as pd
 
-# from sklearn.linear_model import Ridge
-# from src.cvxRegression import ConvexRegression
-# import statsmodels.api as sm
-# import seaborn as sns
 from src.diagnostic import diagnostic_test
 from src.algorithms import hsvt_ols
 
-# from src.matrix import approximate_rank
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 
@@ -25,8 +20,6 @@ class SI(object):
         include_pre=True,
         rank_method="spectral_energy",
         return_donors_info=True,
-        use_lasso=False,
-        use_ridge=False,
     ):
         super(SI, self).__init__()
         self.center = center
@@ -43,8 +36,6 @@ class SI(object):
         self.diagnosis = None
         self.non_donor_list = []
         self.std_df = None
-        self.use_lasso = use_lasso
-        self.use_ridge = use_ridge
 
     def diagnose(self, pre_df, post_df, interventions=None):
         columns = ["unit", "intervention", "metric"]
@@ -225,8 +216,6 @@ class SI(object):
                         include_pre=self.include_pre,
                         method=self.rank_method,
                         return_coefficients=True,
-                        use_lasso=self.use_lasso,
-                        use_ridge=self.use_ridge,
                     )
                     donors_dict[iv][unit][metric] = dict(zip(donors, beta))
                     # append data
@@ -273,10 +262,7 @@ class SI(object):
         cumlative=True,
         true_values=None,
     ):
-        if CI == "mSSA":
-            std = self.std_df_mSSA
-        else:
-            std = self.std_df
+        std = self.std_df
         df_r = self.synthetic_results
         df = pd.concat([self.pre_df, self.post_df.iloc[:, 4:]], axis=1)
         df["intervention"] = self.post_df["intervention"]
