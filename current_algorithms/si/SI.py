@@ -1,13 +1,14 @@
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import Ridge
-from src.cvxRegression import ConvexRegression
-import statsmodels.api as sm
-import seaborn as sns
+
+# from sklearn.linear_model import Ridge
+# from src.cvxRegression import ConvexRegression
+# import statsmodels.api as sm
+# import seaborn as sns
 from src.diagnostic import diagnostic_test
 from src.algorithms import hsvt_ols
-from src.mSSA import mSSA
-from src.matrix import approximate_rank
+
+# from src.matrix import approximate_rank
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 
@@ -24,7 +25,6 @@ class SI(object):
         include_pre=True,
         rank_method="spectral_energy",
         return_donors_info=True,
-        mSSA_CI=False,
         use_lasso=False,
         use_ridge=False,
     ):
@@ -42,7 +42,6 @@ class SI(object):
         self.donors_info = None
         self.diagnosis = None
         self.non_donor_list = []
-        self.std_df_mSSA = None
         self.std_df = None
         self.use_lasso = use_lasso
         self.use_ridge = use_ridge
@@ -116,9 +115,10 @@ class SI(object):
         df["energy_statistic"] = df["energy_statistic"].replace(np.nan, "N/A")
         self.diagnosis = df
 
-    def fit(
-        self, pre_df, post_df, non_donor_list=[], mSSA_CI=False, interventions=None
-    ):
+    def fit(self, pre_df, post_df, non_donor_list=None, interventions=None):
+        if non_donor_list is None:
+            non_donor_list = []
+
         columns = ["unit", "intervention", "metric", "donor"]
         # sort dataframes by (unit, intervention)
         self.pre_df = pre_df.sort_values(by=columns[:3])
@@ -260,29 +260,6 @@ class SI(object):
         # Evalutaion
         self.diagnose(self.pre_df, self.post_df, interventions)
         self.get_scores()
-
-        # mSSA CI
-        if mSSA_CI:
-            # get time series
-            #################### FIX, 21 is not the right number. get the post df numbers ####################
-            ts = df_synth.loc[:, range(21)].values.T
-            ts_diff = ts
-            ## mSSA parameters
-            model = mSSA(5, rank=2, normalize=True)
-            model.fit(ts_diff, train_points=T - T0)
-            var_model = mSSA(5, rank=1, normalize=True)
-            var_model.fit(
-                np.square(ts[: model.imputed.shape[0], :] - model.imputed),
-                train_points=T - T0,
-            )
-            std = np.sqrt(var_model.imputed)
-            std = std.T
-            std = np.concatenate([np.zeros([std.shape[0], len(pre_cols)]), std], axis=1)
-            df_std_mSSA = pd.DataFrame(columns=pre_cols + post_cols[:-1], data=std)
-            df_std_mSSA.insert(0, "metric", idx_data[:, 2])
-            df_std_mSSA.insert(0, "intervention", idx_data[:, 1].astype("int"))
-            df_std_mSSA.insert(0, "unit", idx_data[:, 0])
-            self.std_df_mSSA = df_std_mSSA
 
     def plot_predictions(
         self,

@@ -27,8 +27,10 @@ def approximate_rank(X, t=0.99):
     return rank
 
 
-def approximate_rank2(X, t=0):
+def approximate_rank_donoho(X, t=0):
     """
+    From https://arxiv.org/pdf/1305.5870.pdf
+    
     Input:
         X: donor data (#samples x #donor units)
         t: percentage of spectral energy to retain

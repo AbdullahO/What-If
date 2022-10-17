@@ -1,6 +1,6 @@
 import numpy as np
 import statsmodels.api as sm
-from src.matrix import approximate_rank, approximate_rank2, hsvt
+from src.matrix import approximate_rank, hsvt
 
 # check if row space of X2 lies within row space of X1 (look at right singular vectors)
 def regression_test(v1, v2, alpha=0.05):
@@ -71,8 +71,6 @@ def diagnostic_test(pre_df, post_df, unit_ids, metric, iv, t=0.99, alpha=0.05):
     sigma_1 = np.mean(np.square(X1_hat - X1))
     sigma_2 = np.mean(np.square(X2_hat - X2))
 
-    sigma_1_mssA = np.mean(var1)
-    sigma_2_mssA = np.mean(var2)
     # beta = linear_regression(X1, y1, rcond=rcond)
 
     # perform regression test

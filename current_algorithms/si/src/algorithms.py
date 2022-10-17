@@ -1,7 +1,12 @@
 import numpy as np
-import pandas as pd
-import statsmodels.api as sm
-from src.matrix import center_data, approximate_rank, approximate_rank2, hsvt
+
+
+from src.matrix import(
+    center_data, 
+    approximate_rank, 
+    approximate_rank_donoho, 
+    hsvt
+)
 from src.regression import linear_regression, lasso, ridge
 
 # HSVT + OLS
@@ -54,8 +59,8 @@ def hsvt_ols(
 
     # ranks
     if method == "Donoho":
-        k1 = approximate_rank2(X1)
-        k2 = approximate_rank2(X2)
+        k1 = approximate_rank_donoho(X1)
+        k2 = approximate_rank_donoho(X2)
     else:
         k1 = approximate_rank(X1, t=t)
         k2 = approximate_rank(X2, t=t)
