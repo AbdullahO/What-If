@@ -20,6 +20,11 @@ class SI(base.WhatIFAlgorithm):
 
     # TODO: pre_df/post_df in SI -> labels here
     # Work with Abdullah to decide how to handle this
+    # SI assumes pre_df/post_df split in df if interventions all change
+    # at the same timestamp where each unit only changes their intervention
+    # at this timestamp or doesn't change their intervention
+    # Does unit 1: 000 111, and unit 2: 111 222 work?
+    # 000 111 and 111 000 work?
     def fit(self, df: pd.DataFrame, labels: dict):
         """take sparse tensor and return a full tensor
 

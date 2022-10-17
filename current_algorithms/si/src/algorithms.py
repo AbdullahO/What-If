@@ -10,13 +10,13 @@ def hsvt_ols(
     X2,
     y1,
     t=0.99,
+    method="spectral_energy",
     metric_i=0,
     T0=None,
     center=True,
     rcond=1e-15,
     alpha=0.05,
     include_pre=True,
-    method="spectral_energy",
     return_coefficients=False,
 ):
     """
