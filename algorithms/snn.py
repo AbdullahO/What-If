@@ -111,7 +111,9 @@ class SNN(WhatIFAlgorithm):
         """
         # get tensor from df and labels
         assert len(metrics) == 1, "method can only support single metric for now"
-
+        self.metric = metrics[0]
+        # convert time to datetime column
+        df[time_column] = pd.to_datetime(df[time_column])
         # get tensor dimensions
         units = df[unit_column].unique()
         N = len(units)
@@ -126,41 +128,74 @@ class SNN(WhatIFAlgorithm):
         # get tensor values
         metric_matrix = df.pivot(
             index=unit_column, columns=time_column, values=metrics[0]
-        ).values
-        self.units_dict = dict(
-            metric_matrix.index,
-            zip(
-                np.arange(N),
-            ),
         )
-        self.time_dict = dict(metric_matrix.columns, zip(np.arange(T)))
+        self.units_dict = dict(zip(metric_matrix.index, np.arange(N)))
+        self.time_dict = dict(zip(metric_matrix.columns, np.arange(T)))
 
         df["intervention_assignment"] = (
             df[actions].agg("-".join, axis=1).map(self.actions_dict).values
         )
-        intervention_assignment_matrix = df.pivot(
+        self.true_intervention_assignment_matrix = df.pivot(
             index=unit_column, columns=time_column, values="intervention_assignment"
         ).values
+
+        metric_matrix = metric_matrix.values
         for action_idx in range(I):
             tensor[
-                intervention_assignment_matrix == action_idx, action_idx
-            ] = metric_matrix[intervention_assignment_matrix == action_idx]
+                self.true_intervention_assignment_matrix == action_idx, action_idx
+            ] = metric_matrix[self.true_intervention_assignment_matrix == action_idx]
 
         # tensor to matrix
         self.matrix = tensor.reshape([N, I * T])
-
-        # flatten tensor
-        self.matrix = tensor.reshape([N, T * I])
 
         # fill matrix
         self.matrix_full = self._fit_transform(self.matrix)
 
         # reshape matrix
-        self.tensor = self.matrix.reshape([N, T, I])
+        self.tensor = self.matrix_full.reshape([N, T, I])
 
-    def query(self, units, time, metric, action, action_range):
+    def query(self, units, time, metric, action, action_time_range):
         """returns answer to what if query"""
-        raise NotImplementedError()
+
+        # Get the units time, action, and action_time_range indices
+        unit_idx = [self.units_dict[u] for u in units]
+        # convert to timestamp
+        time = [pd.Timestamp(t) for t in time]
+        # get all timesteps in range
+        timesteps = [t for t in self.time_dict.keys() if t <= time[1] and t >= time[0]]
+        # get idx
+        time_idx = [self.time_dict[t] for t in timesteps]
+
+        # convert to timestamp
+        action_time_range = [pd.Timestamp(t) for t in action_time_range]
+        # get all timesteps in action range
+        action_timesteps = [
+            t
+            for t in self.time_dict.keys()
+            if t <= action_time_range[1] and t >= action_time_range[0]
+        ]
+        # get idx
+        action_time_idx = [self.time_dict[t] for t in action_timesteps]
+        # get action idx
+        action_idx = self.actions_dict[action]
+        # Get default actions assignment for units of interest
+        assignment = np.array(self.true_intervention_assignment_matrix[unit_idx, :])
+        # change assignment according to the requested action range
+        assignment[:, action_time_idx] = action_idx
+        # get it for only the time frame of interest
+        assignment = assignment[:, time_idx]
+
+        # Get the right tensor slices |request units| x |request time range| x |actions|
+        tensor_unit_time = self.tensor[unit_idx, :][:, time_idx, :]
+        # Select the right matrix based on the actions selected
+        assignment = assignment.reshape([assignment.shape[0], assignment.shape[1], 1])
+        selected_matrix = np.take_along_axis(tensor_unit_time, assignment, axis=2)[
+            :, :, 0
+        ]
+
+        # return unit X time DF
+        out_df = pd.DataFrame(data=selected_matrix, index=units, columns=timesteps)
+        return out_df
 
     def diagnostics(self):
         """returns method-specifc diagnostics"""
