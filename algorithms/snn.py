@@ -1,19 +1,18 @@
 """
-Synthetic Nearest Neighbors algorithm: WIP
+Synthetic Nearest Neighbors algorithm:
+Refactoring the code in https://github.com/deshen24/syntheticNN
 """
 import sys
 import warnings
-import random
+import pandas as pd
 import numpy as np
 import networkx as nx
 from networkx.algorithms.clique import find_cliques  # type: ignore
 from sklearn.utils import check_array  # type: ignore
 from algorithms.base import WhatIFAlgorithm, FillTensorBase
 
-# https://github.com/deshen24/syntheticNN
 
-
-class SyntheticNearestNeighbors:
+class SNN(WhatIFAlgorithm):
     """
     Impute missing entries in a matrix via SNN algorithm
     """
@@ -79,12 +78,177 @@ class SyntheticNearestNeighbors:
         self.min_value = min_value
         self.max_value = max_value
         self.verbose = verbose
+        self.actions_dict = None
+        self.units_dict = None
+        self.time_dict = None
+        self.matrix = None
 
     def __repr__(self):
         """
         print parameters of SNN class
         """
         return str(self)
+
+    def fit(
+        self,
+        df: pd.DataFrame,
+        unit_column: str,
+        time_column: str,
+        metrics: list,
+        actions: list,
+        covariates: list = None,
+    ):
+        """take sparse tensor and fill it!
+
+        Args:
+            df (pd.DataFrame): data dataframe
+            unit_column (str): name for the unit column
+            time_column (str): name for the time column
+            metrics (list): list of names for the metric columns
+            actions (list): list of names for the action columns
+            covariates (list, optional): list of names for the covariate columns. Defaults to None.
+
+        """
+        # get tensor from df and labels
+        assert len(metrics) == 1, "method can only support single metric for now"
+        self.metric = metrics[0]
+        # convert time to datetime column
+        df[time_column] = pd.to_datetime(df[time_column])
+        # get tensor dimensions
+        units = df[unit_column].unique()
+        N = len(units)
+        timesteps = df[time_column].unique()
+        T = len(timesteps)
+        list_of_actions = df[actions].drop_duplicates().agg("-".join, axis=1).values
+        I = len(list_of_actions)
+        self.actions_dict = dict(zip(list_of_actions, np.arange(I)))
+
+        # init tensors
+        tensor = np.full([N, T, I], np.nan)
+        # get tensor values
+        metric_matrix = df.pivot(
+            index=unit_column, columns=time_column, values=metrics[0]
+        )
+        self.units_dict = dict(zip(metric_matrix.index, np.arange(N)))
+        self.time_dict = dict(zip(metric_matrix.columns, np.arange(T)))
+
+        df["intervention_assignment"] = (
+            df[actions].agg("-".join, axis=1).map(self.actions_dict).values
+        )
+        self.true_intervention_assignment_matrix = df.pivot(
+            index=unit_column, columns=time_column, values="intervention_assignment"
+        ).values
+
+        metric_matrix = metric_matrix.values
+        for action_idx in range(I):
+            tensor[
+                self.true_intervention_assignment_matrix == action_idx, action_idx
+            ] = metric_matrix[self.true_intervention_assignment_matrix == action_idx]
+
+        # tensor to matrix
+        self.matrix = tensor.reshape([N, I * T])
+
+        # fill matrix
+        self.matrix_full = self._fit_transform(self.matrix)
+
+        # reshape matrix
+        self.tensor = self.matrix_full.reshape([N, T, I])
+
+    def query(self, units, time, metric, action, action_time_range):
+        """returns answer to what if query"""
+
+        # Get the units time, action, and action_time_range indices
+        unit_idx = [self.units_dict[u] for u in units]
+        # convert to timestamp
+        time = [pd.Timestamp(t) for t in time]
+        # get all timesteps in range
+        timesteps = [t for t in self.time_dict.keys() if t <= time[1] and t >= time[0]]
+        # get idx
+        time_idx = [self.time_dict[t] for t in timesteps]
+
+        # convert to timestamp
+        action_time_range = [pd.Timestamp(t) for t in action_time_range]
+        # get all timesteps in action range
+        action_timesteps = [
+            t
+            for t in self.time_dict.keys()
+            if t <= action_time_range[1] and t >= action_time_range[0]
+        ]
+        # get idx
+        action_time_idx = [self.time_dict[t] for t in action_timesteps]
+        # get action idx
+        action_idx = self.actions_dict[action]
+        # Get default actions assignment for units of interest
+        assignment = np.array(self.true_intervention_assignment_matrix[unit_idx, :])
+        # change assignment according to the requested action range
+        assignment[:, action_time_idx] = action_idx
+        # get it for only the time frame of interest
+        assignment = assignment[:, time_idx]
+
+        # Get the right tensor slices |request units| x |request time range| x |actions|
+        tensor_unit_time = self.tensor[unit_idx, :][:, time_idx, :]
+        # Select the right matrix based on the actions selected
+        assignment = assignment.reshape([assignment.shape[0], assignment.shape[1], 1])
+        selected_matrix = np.take_along_axis(tensor_unit_time, assignment, axis=2)[
+            :, :, 0
+        ]
+
+        # return unit X time DF
+        out_df = pd.DataFrame(data=selected_matrix, index=units, columns=timesteps)
+        return out_df
+
+    def diagnostics(self):
+        """returns method-specifc diagnostics"""
+        raise NotImplementedError()
+
+    def summary(self):
+        """returns method-specifc summary"""
+        raise NotImplementedError()
+
+    def save(self, path):
+        """save trained model"""
+        raise NotImplementedError()
+
+    def load(self, path):
+        """load model"""
+        raise NotImplementedError()
+
+    def _fit_transform(self, X, test_set=None):
+        """
+        complete missing entries in matrix
+        """
+        # get missing entries to impute
+        missing_set = test_set if test_set is not None else np.argwhere(np.isnan(X))
+        num_missing = len(missing_set)
+
+        # check and prepare data
+        X = self._prepare_input_data(X, missing_set)
+
+        # check weights
+        self.weights = self._check_weights(self.weights)
+
+        # initialize
+        X_imputed = X.copy()
+        std_matrix = np.zeros(X.shape)
+        self.feasible = np.empty(X.shape)
+        self.feasible.fill(np.nan)
+
+        # complete missing entries
+        for (i, missing_pair) in enumerate(missing_set):
+            if self.verbose:
+                print("[SNN] iteration {} of {}".format(i + 1, num_missing))
+
+            # predict missing entry
+            (pred, feasible) = self._predict(X, missing_pair=missing_pair)
+
+            # store in imputed matrices
+            (missing_row, missing_col) = missing_pair
+            X_imputed[missing_row, missing_col] = pred
+            self.feasible[missing_row, missing_col] = feasible
+
+        if self.verbose:
+            print("[SNN] complete")
+        return X_imputed
 
     def __str__(self):
         field_list = []
@@ -258,9 +422,7 @@ class SyntheticNearestNeighbors:
         s_feasible = True if subspace_inclusion_stat <= self.subspace_eps else False
         return True if (ls_feasible and s_feasible) else False
 
-    def _synth_neighbor(
-        self, X, missing_pair, anchor_rows, anchor_cols, covariates=None
-    ):
+    def _synth_neighbor(self, X, missing_pair, anchor_rows, anchor_cols):
         """
         construct the k-th synthetic neighbor
         """
@@ -271,16 +433,8 @@ class SyntheticNearestNeighbors:
         X1 = X1[:, anchor_cols]
         X2 = X[anchor_rows, missing_col]
 
-        # add covariates
-        if covariates is not None:
-            y1_covariates = np.hstack([y1, covariates[missing_row]])
-            X1_covariates = np.hstack([X1, covariates[anchor_rows]])
-        else:
-            y1_covariates = y1.copy()
-            X1_covariates = X1.copy()
-
         # learn k-th synthetic neighbor
-        (beta, _, s_rank, v_rank) = self._pcr(X1_covariates.T, y1_covariates)
+        (beta, _, s_rank, v_rank) = self._pcr(X1.T, y1)
 
         # prediction
         pred = self._clip(X2 @ beta)
@@ -298,7 +452,7 @@ class SyntheticNearestNeighbors:
             weight = 1 / d if d > 0 else sys.float_info.max
         return (pred, feasible, weight)
 
-    def _predict(self, X, missing_pair, covariates=None):
+    def _predict(self, X, missing_pair):
         """
         combine predictions from all synthetic neighbors
         """
@@ -321,48 +475,8 @@ class SyntheticNearestNeighbors:
                     missing_pair=missing_pair,
                     anchor_rows=anchor_rows_k,
                     anchor_cols=anchor_cols,
-                    covariates=covariates,
                 )
             w /= np.sum(w)
             pred = np.average(pred, weights=w)
             feasible = all(feasible)
         return (pred, feasible)
-
-    def fit_transform(self, X, covariates=None, test_set=None):
-        """
-        complete missing entries in matrix
-        """
-        # get missing entries to impute
-        missing_set = test_set if test_set is not None else np.argwhere(np.isnan(X))
-        num_missing = len(missing_set)
-
-        # check and prepare data
-        X = self._prepare_input_data(X, missing_set)
-
-        # check weights
-        self.weights = self._check_weights(self.weights)
-
-        # initialize
-        X_imputed = X.copy()
-        std_matrix = np.zeros(X.shape)
-        self.feasible = np.empty(X.shape)
-        self.feasible.fill(np.nan)
-
-        # complete missing entries
-        for (i, missing_pair) in enumerate(missing_set):
-            if self.verbose:
-                print("[SNN] iteration {} of {}".format(i + 1, num_missing))
-
-            # predict missing entry
-            (pred, feasible) = self._predict(
-                X, missing_pair=missing_pair, covariates=covariates
-            )
-
-            # store in imputed matrices
-            (missing_row, missing_col) = missing_pair
-            X_imputed[missing_row, missing_col] = pred
-            self.feasible[missing_row, missing_col] = feasible
-
-        if self.verbose:
-            print("[SNN] complete")
-        return X_imputed

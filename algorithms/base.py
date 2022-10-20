@@ -12,13 +12,16 @@ class WhatIFAlgorithm(ABC):
     # properties
 
     @abstractmethod
-    def fit(self, df: pd.DataFrame, labels: dict):
+    def fit(self, df: pd.DataFrame, unit_column: str, time_column: str, metrics: list, actions: list, covariates: list = None ):
         """take sparse tensor and return a full tensor
-
+        
         Args:
             df (pd.DataFrame): data dataframe
-            labels (dict): labels for unit, time, metric, action, and covariate
-
+            unit_column (str): name for the unit column
+            time_column (str): name for the time column
+            metrics (list): list of names for the metric columns
+            actions (list): list of names for the action columns
+            covariates (list, optional): list of names for the covariate columns. Defaults to None.
         """
 
     @abstractmethod
