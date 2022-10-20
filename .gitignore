@@ -1,4 +1,8 @@
+# virtual env
 whatIf-Env
+
+# profiling
+prof
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
