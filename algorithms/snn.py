@@ -10,7 +10,7 @@ import networkx as nx
 from networkx.algorithms.clique import find_cliques  # type: ignore
 from sklearn.utils import check_array  # type: ignore
 from algorithms.base import WhatIFAlgorithm, FillTensorBase
-from cachetools import cached, TTLCache
+from cachetools import cached
 from cachetools.keys import hashkey
 
 
