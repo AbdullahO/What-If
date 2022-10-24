@@ -10,6 +10,8 @@ import networkx as nx
 from networkx.algorithms.clique import find_cliques  # type: ignore
 from sklearn.utils import check_array  # type: ignore
 from algorithms.base import WhatIFAlgorithm, FillTensorBase
+from cachetools import cached, TTLCache
+from cachetools.keys import hashkey
 
 
 class SNN(WhatIFAlgorithm):
@@ -307,11 +309,18 @@ class SNN(WhatIFAlgorithm):
         find model learning submatrix by reducing to max biclique problem
         """
         (missing_row, missing_col) = missing_pair
-        obs_rows = np.argwhere(~np.isnan(X[:, missing_col])).flatten()
-        obs_cols = np.argwhere(~np.isnan(X[missing_row, :])).flatten()
 
-        # dennis: make sure (i,j) not in (obs_rows, obs_cols)
+        # TODO: instead of n^2 times, we can find these in 2*n (more storage)
+        obs_rows = frozenset(np.argwhere(~np.isnan(X[:, missing_col])).flatten())
+        obs_cols = frozenset(np.argwhere(~np.isnan(X[missing_row, :])).flatten())
+        return self._get_anchors(X, obs_rows, obs_cols)
 
+    @cached(
+        cache={}, key=lambda self, X, obs_rows, obs_cols: hashkey(obs_rows, obs_cols)
+    )
+    def _get_anchors(self, X, obs_rows, obs_cols):
+        obs_rows = np.array(list(obs_rows), dtype=int)
+        obs_cols = np.array(list(obs_cols), dtype=int)
         # create bipartite incidence matrix
         B = X[obs_rows]
         B = B[:, obs_cols]
@@ -320,11 +329,14 @@ class SNN(WhatIFAlgorithm):
         B[np.isnan(B)] = 0
 
         # bipartite graph
+        ## TODO: if graph is slightly different, remove and add nodes/ edges
         (n_rows, n_cols) = B.shape
         A = np.block([[np.ones((n_rows, n_rows)), B], [B.T, np.ones((n_cols, n_cols))]])
         G = nx.from_numpy_matrix(A)
 
         # find max clique that yields the most square (nxn) matrix
+        ## TODO: would using an approximate alg help?
+        #           check: https://networkx.org/documentation/networkx-1.10/reference/generated/networkx.algorithms.approximation.clique.max_clique.html#networkx.algorithms.approximation.clique.max_clique
         cliques = list(find_cliques(G))
         d_min = 0
         max_clique_rows_idx = False
@@ -422,25 +434,41 @@ class SNN(WhatIFAlgorithm):
         s_feasible = True if subspace_inclusion_stat <= self.subspace_eps else False
         return True if (ls_feasible and s_feasible) else False
 
+    @cached(
+        cache={},
+        key=lambda self, X, missing_row, anchor_rows, anchor_cols: hashkey(
+            missing_row, anchor_rows, anchor_cols
+        ),
+    )
+    def _get_beta(self, X, missing_row, anchor_rows, anchor_cols):
+        anchor_rows = np.array(list(anchor_rows), dtype=int)
+        anchor_cols = np.array(list(anchor_cols), dtype=int)
+        y1 = X[missing_row, anchor_cols]
+        X1 = X[anchor_rows, :]
+        X1 = X1[:, anchor_cols]
+        (beta, _, s_rank, v_rank) = self._pcr(X1.T, y1)
+        train_error = self._train_error(X1.T, y1, beta)
+        return beta, v_rank, train_error
+
     def _synth_neighbor(self, X, missing_pair, anchor_rows, anchor_cols):
         """
         construct the k-th synthetic neighbor
         """
         # initialize
         (missing_row, missing_col) = missing_pair
-        y1 = X[missing_row, anchor_cols]
-        X1 = X[anchor_rows, :]
-        X1 = X1[:, anchor_cols]
         X2 = X[anchor_rows, missing_col]
 
         # learn k-th synthetic neighbor
-        (beta, _, s_rank, v_rank) = self._pcr(X1.T, y1)
+        anchor_rows = frozenset(anchor_rows)
+        anchor_cols = frozenset(anchor_cols)
 
+        beta, v_rank, train_error = self._get_beta(
+            X, missing_row, anchor_rows, anchor_cols
+        )
         # prediction
         pred = self._clip(X2 @ beta)
 
         # diagnostics
-        train_error = self._train_error(X1.T, y1, beta)
         subspace_inclusion_stat = self._subspace_inclusion(v_rank, X2)
         feasible = self._isfeasible(train_error, subspace_inclusion_stat)
 
