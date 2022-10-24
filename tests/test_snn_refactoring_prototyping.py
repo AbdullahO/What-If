@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from algorithms.snn import SNN
+from current_algorithms.snn.snn import SNN as old_SNN
 
 current_dir = os.getcwd()
 
@@ -17,6 +18,26 @@ def snn_expected_query_output() -> pd.DataFrame:
 
 
 @pytest.fixture(scope="session")
+def snn_expected_query_output_local(snn_test_df) -> pd.DataFrame:
+    model = old_SNN(verbose=False)
+    model.fit(
+        df=snn_test_df,
+        unit_column="unit_id",
+        time_column="time",
+        metrics=["sales"],
+        actions=["ads"],
+    )
+    query_output = model.query(
+        [0],
+        ["2020-01-10", " 2020-02-19"],
+        "sales",
+        "ad 0",
+        ["2020-01-10", " 2020-02-19"],
+    )
+    return query_output
+
+
+@pytest.fixture(scope="session")
 def snn_test_df() -> pd.DataFrame:
     _snn_test_df = pd.read_csv(
         os.path.join(current_dir, "data/stores_sales_simple/stores_sales_simple.csv")
@@ -24,7 +45,7 @@ def snn_test_df() -> pd.DataFrame:
     return _snn_test_df
 
 
-def test_snn(snn_test_df, snn_expected_query_output):
+def test_snn(snn_test_df, snn_expected_query_output_local):
     model = SNN(verbose=False)
     model.fit(
         df=snn_test_df,
@@ -40,7 +61,7 @@ def test_snn(snn_test_df, snn_expected_query_output):
         "ad 0",
         ["2020-01-10", " 2020-02-19"],
     )
-    assert snn_expected_query_output.equals(
+    assert snn_expected_query_output_local.equals(
         model_query_output
     ), "Query output difference"
     assert model.actions_dict == {
