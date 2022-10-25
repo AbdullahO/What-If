@@ -29,6 +29,7 @@ class SNN(WhatIFAlgorithm):
         min_value=None,
         max_value=None,
         verbose=True,
+        min_singular_value = 1e-7
     ):
         """
         Parameters
@@ -82,6 +83,8 @@ class SNN(WhatIFAlgorithm):
         self.units_dict = None
         self.time_dict = None
         self.matrix = None
+        self.min_singular_value = min_singular_value
+
 
     def __repr__(self):
         """
@@ -380,6 +383,13 @@ class SNN(WhatIFAlgorithm):
         s_rank = s[:rank]
         u_rank = u[:, :rank]
         v_rank = v[:rank, :]
+        
+        # filter out small singular values
+        k = np.argmin(s_rank < self.min_singular_value)+1
+        s_rank = s[:k]
+        u_rank = u[:, :k]
+        v_rank = v[:k, :]
+
         beta = ((v_rank.T / s_rank) @ u_rank.T) @ y
         return (beta, u_rank, s_rank, v_rank)
 
