@@ -40,5 +40,12 @@ def test_snn(snn_test_df, snn_expected_query_output):
         "ad 0",
         ["2020-01-10", " 2020-02-19"],
     )
-    assert snn_expected_query_output.equals(model_query_output), "Query output difference"
-    assert model.actions_dict == {"ad 2": 0, "ad 0": 1, "ad 1": 2}, "Actions dict difference"
+
+    assert snn_expected_query_output.equals(
+        model_query_output
+    ), "Query output difference"
+    assert model.actions_dict == {
+        "ad 2": 0,
+        "ad 0": 1,
+        "ad 1": 2,
+    }, "Actions dict difference"
