@@ -153,6 +153,7 @@ class SNN(WhatIFAlgorithm):
                 self.true_intervention_assignment_matrix == action_idx, action_idx
             ] = metric_matrix[self.true_intervention_assignment_matrix == action_idx]
 
+        # TODO: only save/load one of these representations
         # tensor to matrix
         self.matrix = tensor.reshape([N, I * T])
 
@@ -171,47 +172,59 @@ class SNN(WhatIFAlgorithm):
         action_time_range: List[str],
     ) -> pd.DataFrame:
         """returns answer to what if query"""
-        if self.units_dict is None:
+        units_dict = self.units_dict
+        if units_dict is None:
             raise Exception("self.units_dict is None, have you called fit()?")
 
-        if self.time_dict is None:
+        time_dict = self.time_dict
+        if time_dict is None:
             raise Exception("self.time_dict is None, have you called fit()?")
 
-        if self.actions_dict is None:
+        actions_dict = self.actions_dict
+        if actions_dict is None:
             raise Exception("self.actions_dict is None, have you called fit()?")
 
+
+        # TODO: validate this
+        true_intervention_assignment_matrix = self.true_intervention_assignment_matrix
+
+        # TODO: validate this
+        tensor = self.tensor
+
+        # TODO: NEED TO LOAD everything above this for prediction
+
         # Get the units time, action, and action_time_range indices
-        unit_idx = [self.units_dict[u] for u in units]
+        unit_idx = [units_dict[u] for u in units]
         # convert to timestamp
         _time = [pd.Timestamp(t) for t in time]
         # get all timesteps in range
         timesteps = [
-            t for t in self.time_dict.keys() if t <= _time[1] and t >= _time[0]
+            t for t in time_dict.keys() if t <= _time[1] and t >= _time[0]
         ]
         # get idx
-        time_idx = [self.time_dict[t] for t in timesteps]
+        time_idx = [time_dict[t] for t in timesteps]
 
         # convert to timestamp
         _action_time_range = [pd.Timestamp(t) for t in action_time_range]
         # get all timesteps in action range
         action_timesteps = [
             t
-            for t in self.time_dict.keys()
+            for t in time_dict.keys()
             if t <= _action_time_range[1] and t >= _action_time_range[0]
         ]
         # get idx
-        action_time_idx = [self.time_dict[t] for t in action_timesteps]
+        action_time_idx = [time_dict[t] for t in action_timesteps]
         # get action idx
-        action_idx = self.actions_dict[action]
+        action_idx = actions_dict[action]
         # Get default actions assignment for units of interest
-        assignment = np.array(self.true_intervention_assignment_matrix[unit_idx, :])
+        assignment = np.array(true_intervention_assignment_matrix[unit_idx, :])
         # change assignment according to the requested action range
         assignment[:, action_time_idx] = action_idx
         # get it for only the time frame of interest
         assignment = assignment[:, time_idx]
 
         # Get the right tensor slices |request units| x |request time range| x |actions|
-        tensor_unit_time = self.tensor[unit_idx, :][:, time_idx, :]
+        tensor_unit_time = tensor[unit_idx, :][:, time_idx, :]
         # Select the right matrix based on the actions selected
         assignment = assignment.reshape([assignment.shape[0], assignment.shape[1], 1])
         selected_matrix = np.take_along_axis(tensor_unit_time, assignment, axis=2)[
@@ -234,8 +247,16 @@ class SNN(WhatIFAlgorithm):
         """save trained model"""
         raise NotImplementedError()
 
+    def save_binary(self, path):
+        """save trained model to bytes """
+        raise NotImplementedError()
+
     def load(self, path):
-        """load model"""
+        """load model from file"""
+        raise NotImplementedError()
+
+    def load_binary(self, path):
+        """load trained model from bytes"""
         raise NotImplementedError()
 
     def _fit_transform(self, X: ndarray, test_set: Optional[ndarray] = None) -> ndarray:
