@@ -4,14 +4,17 @@ Refactoring the code in https://github.com/deshen24/syntheticNN
 """
 import sys
 import warnings
-import pandas as pd
-import numpy as np
+from typing import Optional
+
 import networkx as nx
-from networkx.algorithms.clique import find_cliques  # type: ignore
-from sklearn.utils import check_array  # type: ignore
-from algorithms.base import WhatIFAlgorithm, FillTensorBase
+import numpy as np
+import pandas as pd
 from cachetools import cached
 from cachetools.keys import hashkey
+from networkx.algorithms.clique import find_cliques  # type: ignore
+from sklearn.utils import check_array  # type: ignore
+
+from algorithms.base import FillTensorBase, WhatIFAlgorithm
 
 
 class SNN(WhatIFAlgorithm):
@@ -100,7 +103,7 @@ class SNN(WhatIFAlgorithm):
         time_column: str,
         metrics: list,
         actions: list,
-        covariates: list = None,
+        covariates: Optional[list] = None,
     ):
         """take sparse tensor and fill it!
 
@@ -318,7 +321,7 @@ class SNN(WhatIFAlgorithm):
         return self._get_anchors(X, obs_rows, obs_cols)
 
     @cached(
-        cache=dict(), # type: ignore
+        cache=dict(),  # type: ignore
         key=lambda self, X, obs_rows, obs_cols: hashkey(obs_rows, obs_cols),
     )
     def _get_anchors(self, X, obs_rows, obs_cols):
@@ -335,7 +338,7 @@ class SNN(WhatIFAlgorithm):
         ## TODO: if graph is slightly different, remove and add nodes/ edges
         (n_rows, n_cols) = B.shape
         A = np.block([[np.ones((n_rows, n_rows)), B], [B.T, np.ones((n_cols, n_cols))]])
-        G = nx.from_numpy_matrix(A)
+        G = nx.from_numpy_array(A)
 
         # find max clique that yields the most square (nxn) matrix
         ## TODO: would using an approximate alg help?
@@ -445,7 +448,7 @@ class SNN(WhatIFAlgorithm):
         return True if (ls_feasible and s_feasible) else False
 
     @cached(
-        cache=dict(), # type: ignore
+        cache=dict(),  # type: ignore
         key=lambda self, X, missing_row, anchor_rows, anchor_cols: hashkey(
             missing_row, anchor_rows, anchor_cols
         ),
