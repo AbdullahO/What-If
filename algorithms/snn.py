@@ -435,9 +435,11 @@ class SNN(WhatIFAlgorithm):
         clip values to fall within range [min_value, max_value]
         """
         if self.min_value is not None:
-            x = self.min_value if x < self.min_value else x
+            min_value = np.float64(self.min_value)
+            x = max(min_value, x)
         if self.max_value is not None:
-            x = self.max_value if x > self.max_value else x
+            max_value = np.float64(self.max_value)
+            x = min(max_value, x)
         return x
 
     def _train_error(self, X: ndarray, y: ndarray, beta: ndarray) -> float64:
