@@ -4,14 +4,18 @@ Refactoring the code in https://github.com/deshen24/syntheticNN
 """
 import sys
 import warnings
-import pandas as pd
-import numpy as np
+from typing import Any, Iterator, List, Tuple, Union, Optional
+
 import networkx as nx
-from networkx.algorithms.clique import find_cliques  # type: ignore
-from sklearn.utils import check_array  # type: ignore
-from algorithms.base import WhatIFAlgorithm, FillTensorBase
+import numpy as np
+import pandas as pd
 from cachetools import cached
 from cachetools.keys import hashkey
+from networkx.algorithms.clique import find_cliques  # type: ignore
+from sklearn.utils import check_array  # type: ignore
+
+from algorithms.base import FillTensorBase, WhatIFAlgorithm
+from numpy import float64, int64, ndarray
 
 
 class SNN(WhatIFAlgorithm):
@@ -21,18 +25,18 @@ class SNN(WhatIFAlgorithm):
 
     def __init__(
         self,
-        n_neighbors=1,
-        weights="uniform",
-        random_splits=False,
-        max_rank=None,
-        spectral_t=None,
-        linear_span_eps=0.1,
-        subspace_eps=0.1,
-        min_value=None,
-        max_value=None,
-        verbose=True,
-        min_singular_value = 1e-7
-    ):
+        n_neighbors: int = 1,
+        weights: str = "uniform",
+        random_splits: bool = False,
+        max_rank: Optional[int] = None,
+        spectral_t: Optional[float] = None,
+        linear_span_eps: float = 0.1,
+        subspace_eps: float = 0.1,
+        min_value: Optional[float] = None,
+        max_value: Optional[float] = None,
+        verbose: bool = True,
+        min_singular_value: float = 1e-7,
+    ) -> None:
         """
         Parameters
         ----------
@@ -81,12 +85,11 @@ class SNN(WhatIFAlgorithm):
         self.min_value = min_value
         self.max_value = max_value
         self.verbose = verbose
-        self.actions_dict = None
-        self.units_dict = None
-        self.time_dict = None
-        self.matrix = None
+        self.actions_dict: Optional[dict] = None
+        self.units_dict: Optional[dict] = None
+        self.time_dict: Optional[dict] = None
+        self.matrix: Optional[ndarray] = None
         self.min_singular_value = min_singular_value
-
 
     def __repr__(self):
         """
@@ -101,8 +104,8 @@ class SNN(WhatIFAlgorithm):
         time_column: str,
         metrics: list,
         actions: list,
-        covariates: list = None,
-    ):
+        covariates: Optional[list] = None,
+    ) -> None:
         """take sparse tensor and fill it!
 
         Args:
@@ -131,11 +134,11 @@ class SNN(WhatIFAlgorithm):
         # init tensors
         tensor = np.full([N, T, I], np.nan)
         # get tensor values
-        metric_matrix = df.pivot(
+        metric_matrix_df = df.pivot(
             index=unit_column, columns=time_column, values=metrics[0]
         )
-        self.units_dict = dict(zip(metric_matrix.index, np.arange(N)))
-        self.time_dict = dict(zip(metric_matrix.columns, np.arange(T)))
+        self.units_dict = dict(zip(metric_matrix_df.index, np.arange(N)))
+        self.time_dict = dict(zip(metric_matrix_df.columns, np.arange(T)))
 
         df["intervention_assignment"] = (
             df[actions].agg("-".join, axis=1).map(self.actions_dict).values
@@ -144,7 +147,7 @@ class SNN(WhatIFAlgorithm):
             index=unit_column, columns=time_column, values="intervention_assignment"
         ).values
 
-        metric_matrix = metric_matrix.values
+        metric_matrix = metric_matrix_df.values
         for action_idx in range(I):
             tensor[
                 self.true_intervention_assignment_matrix == action_idx, action_idx
@@ -159,25 +162,42 @@ class SNN(WhatIFAlgorithm):
         # reshape matrix
         self.tensor = self.matrix_full.reshape([N, T, I])
 
-    def query(self, units, time, metric, action, action_time_range):
+    def query(
+        self,
+        units: List[int],
+        time: List[str],
+        metric: str,
+        action: str,
+        action_time_range: List[str],
+    ) -> pd.DataFrame:
         """returns answer to what if query"""
+        if self.units_dict is None:
+            raise Exception("self.units_dict is None, have you called fit()?")
+
+        if self.time_dict is None:
+            raise Exception("self.time_dict is None, have you called fit()?")
+
+        if self.actions_dict is None:
+            raise Exception("self.actions_dict is None, have you called fit()?")
 
         # Get the units time, action, and action_time_range indices
         unit_idx = [self.units_dict[u] for u in units]
         # convert to timestamp
-        time = [pd.Timestamp(t) for t in time]
+        _time = [pd.Timestamp(t) for t in time]
         # get all timesteps in range
-        timesteps = [t for t in self.time_dict.keys() if t <= time[1] and t >= time[0]]
+        timesteps = [
+            t for t in self.time_dict.keys() if t <= _time[1] and t >= _time[0]
+        ]
         # get idx
         time_idx = [self.time_dict[t] for t in timesteps]
 
         # convert to timestamp
-        action_time_range = [pd.Timestamp(t) for t in action_time_range]
+        _action_time_range = [pd.Timestamp(t) for t in action_time_range]
         # get all timesteps in action range
         action_timesteps = [
             t
             for t in self.time_dict.keys()
-            if t <= action_time_range[1] and t >= action_time_range[0]
+            if t <= _action_time_range[1] and t >= _action_time_range[0]
         ]
         # get idx
         action_time_idx = [self.time_dict[t] for t in action_timesteps]
@@ -218,7 +238,7 @@ class SNN(WhatIFAlgorithm):
         """load model"""
         raise NotImplementedError()
 
-    def _fit_transform(self, X, test_set=None):
+    def _fit_transform(self, X: ndarray, test_set: Optional[ndarray] = None) -> ndarray:
         """
         complete missing entries in matrix
         """
@@ -264,7 +284,7 @@ class SNN(WhatIFAlgorithm):
                 field_list.append("%s='%s'" % (k, v))
         return "%s(%s)" % (self.__class__.__name__, ", ".join(field_list))
 
-    def _check_input_matrix(self, X, missing_mask):
+    def _check_input_matrix(self, X: ndarray, missing_mask: ndarray) -> None:
         """
         check to make sure that the input matrix
         and its mask of missing values are valid.
@@ -280,7 +300,7 @@ class SNN(WhatIFAlgorithm):
                 "input matrix must have some observed (i.e., non-missing) values"
             )
 
-    def _prepare_input_data(self, X, missing_mask):
+    def _prepare_input_data(self, X: ndarray, missing_mask: ndarray) -> ndarray:
         """
         prepare input matrix X. return if valid else terminate
         """
@@ -290,7 +310,7 @@ class SNN(WhatIFAlgorithm):
         self._check_input_matrix(X, missing_mask)
         return X
 
-    def _check_weights(self, weights):
+    def _check_weights(self, weights: str) -> str:
         """
         check to make sure weights are valid
         """
@@ -300,14 +320,16 @@ class SNN(WhatIFAlgorithm):
             )
         return weights
 
-    def _split(self, arr, k):
+    def _split(self, arr: ndarray, k: int) -> Iterator[Any]:
         """
         split array arr into k subgroups of roughly equal size
         """
         (m, n) = divmod(len(arr), k)
         return (arr[i * m + min(i, n) : (i + 1) * m + min(i + 1, n)] for i in range(k))
 
-    def _find_anchors(self, X, missing_pair):
+    def _find_anchors(
+        self, X: ndarray, missing_pair: ndarray
+    ) -> Tuple[ndarray, ndarray]:
         """
         find model learning submatrix by reducing to max biclique problem
         """
@@ -319,23 +341,26 @@ class SNN(WhatIFAlgorithm):
         return self._get_anchors(X, obs_rows, obs_cols)
 
     @cached(
-        cache={}, key=lambda self, X, obs_rows, obs_cols: hashkey(obs_rows, obs_cols)
+        cache=dict(),  # type: ignore
+        key=lambda self, X, obs_rows, obs_cols: hashkey(obs_rows, obs_cols),
     )
-    def _get_anchors(self, X, obs_rows, obs_cols):
-        obs_rows = np.array(list(obs_rows), dtype=int)
-        obs_cols = np.array(list(obs_cols), dtype=int)
+    def _get_anchors(
+        self, X: ndarray, obs_rows: frozenset, obs_cols: frozenset
+    ) -> Tuple[ndarray, ndarray]:
+        _obs_rows = np.array(list(obs_rows), dtype=int)
+        _obs_cols = np.array(list(obs_cols), dtype=int)
         # create bipartite incidence matrix
-        B = X[obs_rows]
-        B = B[:, obs_cols]
+        B = X[_obs_rows]
+        B = B[:, _obs_cols]
         if not np.any(np.isnan(B)):  # check if fully connected already
-            return (obs_rows, obs_cols)
+            return (_obs_rows, _obs_cols)
         B[np.isnan(B)] = 0
 
         # bipartite graph
         ## TODO: if graph is slightly different, remove and add nodes/ edges
         (n_rows, n_cols) = B.shape
         A = np.block([[np.ones((n_rows, n_rows)), B], [B.T, np.ones((n_cols, n_cols))]])
-        G = nx.from_numpy_matrix(A)
+        G = nx.from_numpy_array(A)
 
         # find max clique that yields the most square (nxn) matrix
         ## TODO: would using an approximate alg help?
@@ -355,8 +380,8 @@ class SNN(WhatIFAlgorithm):
                 max_clique_cols_idx = clique_cols_idx
 
         # determine model learning rows & cols
-        anchor_rows = obs_rows[max_clique_rows_idx]
-        anchor_cols = obs_cols[max_clique_cols_idx]
+        anchor_rows = _obs_rows[max_clique_rows_idx]
+        anchor_cols = _obs_cols[max_clique_cols_idx]
         return (anchor_rows, anchor_cols)
 
     def _spectral_rank(self, s):
@@ -370,7 +395,7 @@ class SNN(WhatIFAlgorithm):
             rank = list((total_energy > self.spectral_t)).index(True) + 1
         return rank
 
-    def _universal_rank(self, s, ratio):
+    def _universal_rank(self, s: ndarray, ratio: float) -> int:
         """
         retain all singular values above optimal threshold as per Donoho & Gavish '14:
         https://arxiv.org/pdf/1305.5870.pdf
@@ -380,7 +405,7 @@ class SNN(WhatIFAlgorithm):
         rank = max(len(s[s > t]), 1)
         return rank
 
-    def _pcr(self, X, y):
+    def _pcr(self, X: ndarray, y: ndarray) -> Tuple[ndarray, ndarray, ndarray, ndarray]:
         """
         principal component regression (PCR)
         """
@@ -395,9 +420,9 @@ class SNN(WhatIFAlgorithm):
         s_rank = s[:rank]
         u_rank = u[:, :rank]
         v_rank = v[:rank, :]
-        
+
         # filter out small singular values
-        k = np.argmin(s_rank < self.min_singular_value)+1
+        k = int(np.argmin(s_rank < self.min_singular_value)) + 1
         s_rank = s[:k]
         u_rank = u[:, :k]
         v_rank = v[:k, :]
@@ -405,17 +430,19 @@ class SNN(WhatIFAlgorithm):
         beta = ((v_rank.T / s_rank) @ u_rank.T) @ y
         return (beta, u_rank, s_rank, v_rank)
 
-    def _clip(self, x):
+    def _clip(self, x: float64) -> float64:
         """
         clip values to fall within range [min_value, max_value]
         """
         if self.min_value is not None:
-            x = self.min_value if x < self.min_value else x
+            min_value = np.float64(self.min_value)
+            x = max(min_value, x)
         if self.max_value is not None:
-            x = self.max_value if x > self.max_value else x
+            max_value = np.float64(self.max_value)
+            x = min(max_value, x)
         return x
 
-    def _train_error(self, X, y, beta):
+    def _train_error(self, X: ndarray, y: ndarray, beta: ndarray) -> float64:
         """
         compute (normalized) training error
         """
@@ -424,7 +451,7 @@ class SNN(WhatIFAlgorithm):
         ratio = delta / np.linalg.norm(y)
         return ratio**2
 
-    def _subspace_inclusion(self, V1, X2):
+    def _subspace_inclusion(self, V1: ndarray, X2: ndarray) -> float64:
         """
         compute subspace inclusion statistic
         """
@@ -432,7 +459,9 @@ class SNN(WhatIFAlgorithm):
         ratio = np.linalg.norm(delta) / np.linalg.norm(X2)
         return ratio**2
 
-    def _isfeasible(self, train_error, subspace_inclusion_stat):
+    def _isfeasible(
+        self, train_error: float64, subspace_inclusion_stat: float64
+    ) -> bool:
         """
         check feasibility of prediction
         True iff linear span + subspace inclusion tests both pass
@@ -445,22 +474,34 @@ class SNN(WhatIFAlgorithm):
         return True if (ls_feasible and s_feasible) else False
 
     @cached(
-        cache={},
+        cache=dict(),  # type: ignore
         key=lambda self, X, missing_row, anchor_rows, anchor_cols: hashkey(
             missing_row, anchor_rows, anchor_cols
         ),
     )
-    def _get_beta(self, X, missing_row, anchor_rows, anchor_cols):
-        anchor_rows = np.array(list(anchor_rows), dtype=int)
-        anchor_cols = np.array(list(anchor_cols), dtype=int)
-        y1 = X[missing_row, anchor_cols]
-        X1 = X[anchor_rows, :]
-        X1 = X1[:, anchor_cols]
+    def _get_beta(
+        self,
+        X: ndarray,
+        missing_row: int64,
+        anchor_rows: frozenset,
+        anchor_cols: frozenset,
+    ) -> Tuple[ndarray, ndarray, float64]:
+        _anchor_rows = np.array(list(anchor_rows), dtype=int)
+        _anchor_cols = np.array(list(anchor_cols), dtype=int)
+        y1 = X[missing_row, _anchor_cols]
+        X1 = X[_anchor_rows, :]
+        X1 = X1[:, _anchor_cols]
         (beta, _, s_rank, v_rank) = self._pcr(X1.T, y1)
         train_error = self._train_error(X1.T, y1, beta)
         return beta, v_rank, train_error
 
-    def _synth_neighbor(self, X, missing_pair, anchor_rows, anchor_cols):
+    def _synth_neighbor(
+        self,
+        X: ndarray,
+        missing_pair: ndarray,
+        anchor_rows: ndarray,
+        anchor_cols: ndarray,
+    ) -> Tuple[float64, bool, float]:
         """
         construct the k-th synthetic neighbor
         """
@@ -469,11 +510,11 @@ class SNN(WhatIFAlgorithm):
         X2 = X[anchor_rows, missing_col]
 
         # learn k-th synthetic neighbor
-        anchor_rows = frozenset(anchor_rows)
-        anchor_cols = frozenset(anchor_cols)
+        _anchor_rows = frozenset(anchor_rows)
+        _anchor_cols = frozenset(anchor_cols)
 
         beta, v_rank, train_error = self._get_beta(
-            X, missing_row, anchor_rows, anchor_cols
+            X, missing_row, _anchor_rows, _anchor_cols
         )
         # prediction
         pred = self._clip(X2 @ beta)
@@ -484,37 +525,41 @@ class SNN(WhatIFAlgorithm):
 
         # assign weight of k-th synthetic neighbor
         if self.weights == "uniform":
-            weight = 1
+            weight = 1.0
         elif self.weights == "distance":
-            d = train_error + subspace_inclusion_stat
-            weight = 1 / d if d > 0 else sys.float_info.max
+            d = float(train_error + subspace_inclusion_stat)
+            weight = (1.0 / d) if d > 0 else sys.float_info.max
         return (pred, feasible, weight)
 
-    def _predict(self, X, missing_pair):
+    def _predict(
+        self, X: ndarray, missing_pair: ndarray
+    ) -> Union[Tuple[float, bool], Tuple[float64, bool]]:
         """
         combine predictions from all synthetic neighbors
         """
         # find anchor rows and cols
         (anchor_rows, anchor_cols) = self._find_anchors(X, missing_pair=missing_pair)
         if not anchor_rows.size:
-            (pred, feasible) = (np.nan, False)
+            (pred, feasible) = (np.float64(np.nan), False)
         else:
             if self.random_splits:
                 anchor_rows = np.random.permutation(anchor_rows)
             anchor_rows_splits = list(self._split(anchor_rows, k=self.n_neighbors))
-            pred = np.zeros(self.n_neighbors)
-            feasible = np.zeros(self.n_neighbors)
-            w = np.zeros(self.n_neighbors)
-
+            pred_arr = np.zeros(self.n_neighbors)
+            feasible_arr = np.zeros(self.n_neighbors)
+            weights = np.zeros(self.n_neighbors)
             # iterate through all row splits
             for (k, anchor_rows_k) in enumerate(anchor_rows_splits):
-                (pred[k], feasible[k], w[k]) = self._synth_neighbor(
+                _pred, _feasible, _weight = self._synth_neighbor(
                     X,
                     missing_pair=missing_pair,
                     anchor_rows=anchor_rows_k,
                     anchor_cols=anchor_cols,
                 )
-            w /= np.sum(w)
-            pred = np.average(pred, weights=w)
-            feasible = all(feasible)
+                pred_arr[k] = _pred
+                feasible_arr[k] = _feasible
+                weights[k] = _weight
+            weights /= np.sum(weights)
+            pred = np.float64(np.average(pred_arr, weights=weights))
+            feasible = all(feasible_arr)
         return (pred, feasible)
