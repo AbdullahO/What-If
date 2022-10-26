@@ -31,7 +31,7 @@ class SNN(WhatIFAlgorithm):
         min_value=None,
         max_value=None,
         verbose=True,
-        min_singular_value = 1e-7
+        min_singular_value=1e-7,
     ):
         """
         Parameters
@@ -87,7 +87,6 @@ class SNN(WhatIFAlgorithm):
         self.matrix = None
         self.min_singular_value = min_singular_value
 
-
     def __repr__(self):
         """
         print parameters of SNN class
@@ -131,11 +130,11 @@ class SNN(WhatIFAlgorithm):
         # init tensors
         tensor = np.full([N, T, I], np.nan)
         # get tensor values
-        metric_matrix = df.pivot(
+        metric_matrix_df = df.pivot(
             index=unit_column, columns=time_column, values=metrics[0]
         )
-        self.units_dict = dict(zip(metric_matrix.index, np.arange(N)))
-        self.time_dict = dict(zip(metric_matrix.columns, np.arange(T)))
+        self.units_dict = dict(zip(metric_matrix_df.index, np.arange(N)))
+        self.time_dict = dict(zip(metric_matrix_df.columns, np.arange(T)))
 
         df["intervention_assignment"] = (
             df[actions].agg("-".join, axis=1).map(self.actions_dict).values
@@ -144,7 +143,7 @@ class SNN(WhatIFAlgorithm):
             index=unit_column, columns=time_column, values="intervention_assignment"
         ).values
 
-        metric_matrix = metric_matrix.values
+        metric_matrix = metric_matrix_df.values
         for action_idx in range(I):
             tensor[
                 self.true_intervention_assignment_matrix == action_idx, action_idx
@@ -319,7 +318,8 @@ class SNN(WhatIFAlgorithm):
         return self._get_anchors(X, obs_rows, obs_cols)
 
     @cached(
-        cache={}, key=lambda self, X, obs_rows, obs_cols: hashkey(obs_rows, obs_cols)
+        cache=dict(), # type: ignore
+        key=lambda self, X, obs_rows, obs_cols: hashkey(obs_rows, obs_cols),
     )
     def _get_anchors(self, X, obs_rows, obs_cols):
         obs_rows = np.array(list(obs_rows), dtype=int)
@@ -395,9 +395,9 @@ class SNN(WhatIFAlgorithm):
         s_rank = s[:rank]
         u_rank = u[:, :rank]
         v_rank = v[:rank, :]
-        
+
         # filter out small singular values
-        k = np.argmin(s_rank < self.min_singular_value)+1
+        k = np.argmin(s_rank < self.min_singular_value) + 1
         s_rank = s[:k]
         u_rank = u[:, :k]
         v_rank = v[:k, :]
@@ -445,7 +445,7 @@ class SNN(WhatIFAlgorithm):
         return True if (ls_feasible and s_feasible) else False
 
     @cached(
-        cache={},
+        cache=dict(), # type: ignore
         key=lambda self, X, missing_row, anchor_rows, anchor_cols: hashkey(
             missing_row, anchor_rows, anchor_cols
         ),
