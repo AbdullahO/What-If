@@ -4,7 +4,7 @@ Refactoring the code in https://github.com/deshen24/syntheticNN
 """
 import sys
 import warnings
-from typing import Optional
+from typing import Any, Iterator, List, Tuple, Union, Optional
 
 import networkx as nx
 import numpy as np
@@ -15,6 +15,8 @@ from networkx.algorithms.clique import find_cliques  # type: ignore
 from sklearn.utils import check_array  # type: ignore
 
 from algorithms.base import FillTensorBase, WhatIFAlgorithm
+from numpy import float64, int64, ndarray
+from pandas.core.frame import DataFrame
 
 
 class SNN(WhatIFAlgorithm):
@@ -24,18 +26,18 @@ class SNN(WhatIFAlgorithm):
 
     def __init__(
         self,
-        n_neighbors=1,
-        weights="uniform",
-        random_splits=False,
-        max_rank=None,
-        spectral_t=None,
-        linear_span_eps=0.1,
-        subspace_eps=0.1,
-        min_value=None,
-        max_value=None,
-        verbose=True,
-        min_singular_value=1e-7,
-    ):
+        n_neighbors: int=1,
+        weights: str="uniform",
+        random_splits: bool=False,
+        max_rank: None=None,
+        spectral_t: None=None,
+        linear_span_eps: float=0.1,
+        subspace_eps: float=0.1,
+        min_value: None=None,
+        max_value: None=None,
+        verbose: bool=True,
+        min_singular_value: float=1e-7,
+    ) -> None:
         """
         Parameters
         ----------
@@ -104,7 +106,7 @@ class SNN(WhatIFAlgorithm):
         metrics: list,
         actions: list,
         covariates: Optional[list] = None,
-    ):
+    ) -> None:
         """take sparse tensor and fill it!
 
         Args:
@@ -161,7 +163,7 @@ class SNN(WhatIFAlgorithm):
         # reshape matrix
         self.tensor = self.matrix_full.reshape([N, T, I])
 
-    def query(self, units, time, metric, action, action_time_range):
+    def query(self, units: List[int], time: List[str], metric: str, action: str, action_time_range: List[str]) -> DataFrame:
         """returns answer to what if query"""
 
         # Get the units time, action, and action_time_range indices
@@ -220,7 +222,7 @@ class SNN(WhatIFAlgorithm):
         """load model"""
         raise NotImplementedError()
 
-    def _fit_transform(self, X, test_set=None):
+    def _fit_transform(self, X: ndarray, test_set: None=None) -> ndarray:
         """
         complete missing entries in matrix
         """
@@ -266,7 +268,7 @@ class SNN(WhatIFAlgorithm):
                 field_list.append("%s='%s'" % (k, v))
         return "%s(%s)" % (self.__class__.__name__, ", ".join(field_list))
 
-    def _check_input_matrix(self, X, missing_mask):
+    def _check_input_matrix(self, X: ndarray, missing_mask: ndarray) -> None:
         """
         check to make sure that the input matrix
         and its mask of missing values are valid.
@@ -282,7 +284,7 @@ class SNN(WhatIFAlgorithm):
                 "input matrix must have some observed (i.e., non-missing) values"
             )
 
-    def _prepare_input_data(self, X, missing_mask):
+    def _prepare_input_data(self, X: ndarray, missing_mask: ndarray) -> ndarray:
         """
         prepare input matrix X. return if valid else terminate
         """
@@ -292,7 +294,7 @@ class SNN(WhatIFAlgorithm):
         self._check_input_matrix(X, missing_mask)
         return X
 
-    def _check_weights(self, weights):
+    def _check_weights(self, weights: str) -> str:
         """
         check to make sure weights are valid
         """
@@ -302,14 +304,14 @@ class SNN(WhatIFAlgorithm):
             )
         return weights
 
-    def _split(self, arr, k):
+    def _split(self, arr: ndarray, k: int) -> Iterator[Any]:
         """
         split array arr into k subgroups of roughly equal size
         """
         (m, n) = divmod(len(arr), k)
         return (arr[i * m + min(i, n) : (i + 1) * m + min(i + 1, n)] for i in range(k))
 
-    def _find_anchors(self, X, missing_pair):
+    def _find_anchors(self, X: ndarray, missing_pair: ndarray) -> Tuple[ndarray, ndarray]:
         """
         find model learning submatrix by reducing to max biclique problem
         """
@@ -324,7 +326,7 @@ class SNN(WhatIFAlgorithm):
         cache=dict(),  # type: ignore
         key=lambda self, X, obs_rows, obs_cols: hashkey(obs_rows, obs_cols),
     )
-    def _get_anchors(self, X, obs_rows, obs_cols):
+    def _get_anchors(self, X: ndarray, obs_rows: frozenset, obs_cols: frozenset) -> Tuple[ndarray, ndarray]:
         obs_rows = np.array(list(obs_rows), dtype=int)
         obs_cols = np.array(list(obs_cols), dtype=int)
         # create bipartite incidence matrix
@@ -373,7 +375,7 @@ class SNN(WhatIFAlgorithm):
             rank = list((total_energy > self.spectral_t)).index(True) + 1
         return rank
 
-    def _universal_rank(self, s, ratio):
+    def _universal_rank(self, s: ndarray, ratio: float) -> int:
         """
         retain all singular values above optimal threshold as per Donoho & Gavish '14:
         https://arxiv.org/pdf/1305.5870.pdf
@@ -383,7 +385,7 @@ class SNN(WhatIFAlgorithm):
         rank = max(len(s[s > t]), 1)
         return rank
 
-    def _pcr(self, X, y):
+    def _pcr(self, X: ndarray, y: ndarray) -> Tuple[ndarray, ndarray, ndarray, ndarray]:
         """
         principal component regression (PCR)
         """
@@ -408,7 +410,7 @@ class SNN(WhatIFAlgorithm):
         beta = ((v_rank.T / s_rank) @ u_rank.T) @ y
         return (beta, u_rank, s_rank, v_rank)
 
-    def _clip(self, x):
+    def _clip(self, x: float64) -> float64:
         """
         clip values to fall within range [min_value, max_value]
         """
@@ -418,7 +420,7 @@ class SNN(WhatIFAlgorithm):
             x = self.max_value if x > self.max_value else x
         return x
 
-    def _train_error(self, X, y, beta):
+    def _train_error(self, X: ndarray, y: ndarray, beta: ndarray) -> float64:
         """
         compute (normalized) training error
         """
@@ -427,7 +429,7 @@ class SNN(WhatIFAlgorithm):
         ratio = delta / np.linalg.norm(y)
         return ratio**2
 
-    def _subspace_inclusion(self, V1, X2):
+    def _subspace_inclusion(self, V1: ndarray, X2: ndarray) -> float64:
         """
         compute subspace inclusion statistic
         """
@@ -435,7 +437,7 @@ class SNN(WhatIFAlgorithm):
         ratio = np.linalg.norm(delta) / np.linalg.norm(X2)
         return ratio**2
 
-    def _isfeasible(self, train_error, subspace_inclusion_stat):
+    def _isfeasible(self, train_error: float64, subspace_inclusion_stat: float64) -> bool:
         """
         check feasibility of prediction
         True iff linear span + subspace inclusion tests both pass
@@ -453,7 +455,7 @@ class SNN(WhatIFAlgorithm):
             missing_row, anchor_rows, anchor_cols
         ),
     )
-    def _get_beta(self, X, missing_row, anchor_rows, anchor_cols):
+    def _get_beta(self, X: ndarray, missing_row: int64, anchor_rows: frozenset, anchor_cols: frozenset) -> Tuple[ndarray, ndarray, float64]:
         anchor_rows = np.array(list(anchor_rows), dtype=int)
         anchor_cols = np.array(list(anchor_cols), dtype=int)
         y1 = X[missing_row, anchor_cols]
@@ -463,7 +465,7 @@ class SNN(WhatIFAlgorithm):
         train_error = self._train_error(X1.T, y1, beta)
         return beta, v_rank, train_error
 
-    def _synth_neighbor(self, X, missing_pair, anchor_rows, anchor_cols):
+    def _synth_neighbor(self, X: ndarray, missing_pair: ndarray, anchor_rows: ndarray, anchor_cols: ndarray) -> Tuple[float64, bool, int]:
         """
         construct the k-th synthetic neighbor
         """
@@ -493,7 +495,7 @@ class SNN(WhatIFAlgorithm):
             weight = 1 / d if d > 0 else sys.float_info.max
         return (pred, feasible, weight)
 
-    def _predict(self, X, missing_pair):
+    def _predict(self, X: ndarray, missing_pair: ndarray) -> Union[Tuple[float, bool], Tuple[float64, bool]]:
         """
         combine predictions from all synthetic neighbors
         """
