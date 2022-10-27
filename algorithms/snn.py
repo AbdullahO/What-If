@@ -97,32 +97,14 @@ class SNN(WhatIFAlgorithm):
         """
         return str(self)
 
-    def fit(
+    def _get_tensor(
         self,
         df: pd.DataFrame,
         unit_column: str,
         time_column: str,
-        metrics: list,
-        actions: list,
-        covariates: Optional[list] = None,
-    ) -> None:
-        """take sparse tensor and fill it!
-
-        Args:
-            df (pd.DataFrame): data dataframe
-            unit_column (str): name for the unit column
-            time_column (str): name for the time column
-            metrics (list): list of names for the metric columns
-            actions (list): list of names for the action columns
-            covariates (list, optional): list of names for the covariate columns. Defaults to None.
-
-        """
-        # get tensor from df and labels
-        assert len(metrics) == 1, "method can only support single metric for now"
-        self.metric = metrics[0]
-        # convert time to datetime column
-        df[time_column] = pd.to_datetime(df[time_column])
-        # get tensor dimensions
+        actions: List[str],
+        metrics: List[str],
+    ) -> Tuple[ndarray, int, int, int]:
         units = df[unit_column].unique()
         N = len(units)
         timesteps = df[time_column].unique()
@@ -152,6 +134,37 @@ class SNN(WhatIFAlgorithm):
             tensor[
                 self.true_intervention_assignment_matrix == action_idx, action_idx
             ] = metric_matrix[self.true_intervention_assignment_matrix == action_idx]
+        return tensor, N, I, T
+
+    def fit(
+        self,
+        df: pd.DataFrame,
+        unit_column: str,
+        time_column: str,
+        metrics: list,
+        actions: list,
+        covariates: Optional[list] = None,
+    ) -> None:
+        """take sparse tensor and fill it!
+
+        Args:
+            df (pd.DataFrame): data dataframe
+            unit_column (str): name for the unit column
+            time_column (str): name for the time column
+            metrics (list): list of names for the metric columns
+            actions (list): list of names for the action columns
+            covariates (list, optional): list of names for the covariate columns. Defaults to None.
+
+        """
+        # get tensor from df and labels
+        assert len(metrics) == 1, "method can only support single metric for now"
+        self.metric = metrics[0]
+        # convert time to datetime column
+        df[time_column] = pd.to_datetime(df[time_column])
+        # get tensor dimensions
+        tensor, N, I, T = self._get_tensor(
+            df, unit_column, time_column, actions, metrics
+        )
 
         # TODO: only save/load one of these representations
         # tensor to matrix
@@ -256,25 +269,29 @@ class SNN(WhatIFAlgorithm):
         """load trained model from bytes"""
         raise NotImplementedError()
 
+    def _initialize(
+        self, X: ndarray, missing_set: ndarray
+    ) -> Tuple[ndarray, ndarray]:
+        # check and prepare data
+        X = self._prepare_input_data(X, missing_set)
+        # check weights
+        self.weights = self._check_weights(self.weights)
+        # initialize
+        X_imputed = X.copy()
+        self.feasible = np.empty(X.shape)
+        self.feasible.fill(np.nan)
+        return X, X_imputed
+
     def _fit_transform(self, X: ndarray, test_set: Optional[ndarray] = None) -> ndarray:
         """
         complete missing entries in matrix
         """
-        # get missing entries to impute
-        missing_set = test_set if test_set is not None else np.argwhere(np.isnan(X))
+        missing_set = test_set
+        if missing_set is None:
+            missing_set = np.argwhere(np.isnan(X))
         num_missing = len(missing_set)
 
-        # check and prepare data
-        X = self._prepare_input_data(X, missing_set)
-
-        # check weights
-        self.weights = self._check_weights(self.weights)
-
-        # initialize
-        X_imputed = X.copy()
-        std_matrix = np.zeros(X.shape)
-        self.feasible = np.empty(X.shape)
-        self.feasible.fill(np.nan)
+        X, X_imputed = self._initialize(X, missing_set)
 
         # complete missing entries
         for (i, missing_pair) in enumerate(missing_set):
