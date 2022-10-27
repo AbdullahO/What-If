@@ -184,7 +184,6 @@ class SNN(WhatIFAlgorithm):
         if actions_dict is None:
             raise Exception("self.actions_dict is None, have you called fit()?")
 
-
         # TODO: validate this
         true_intervention_assignment_matrix = self.true_intervention_assignment_matrix
 
@@ -198,9 +197,7 @@ class SNN(WhatIFAlgorithm):
         # convert to timestamp
         _time = [pd.Timestamp(t) for t in time]
         # get all timesteps in range
-        timesteps = [
-            t for t in time_dict.keys() if t <= _time[1] and t >= _time[0]
-        ]
+        timesteps = [t for t in time_dict.keys() if t <= _time[1] and t >= _time[0]]
         # get idx
         time_idx = [time_dict[t] for t in timesteps]
 
@@ -248,7 +245,7 @@ class SNN(WhatIFAlgorithm):
         raise NotImplementedError()
 
     def save_binary(self, path):
-        """save trained model to bytes """
+        """save trained model to bytes"""
         raise NotImplementedError()
 
     def load(self, path):
@@ -552,9 +549,7 @@ class SNN(WhatIFAlgorithm):
             weight = (1.0 / d) if d > 0 else sys.float_info.max
         return (pred, feasible, weight)
 
-    def _predict(
-        self, X: ndarray, missing_pair: ndarray
-    ) -> Union[Tuple[float, bool], Tuple[float64, bool]]:
+    def _predict(self, X: ndarray, missing_pair: ndarray) -> Tuple[float64, bool]:
         """
         combine predictions from all synthetic neighbors
         """
