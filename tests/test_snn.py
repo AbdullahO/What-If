@@ -40,6 +40,7 @@ def snn_model() -> SNN:
 
 def test_predict(snn_model: SNN):
     X = snn_model.matrix
+    assert X is not None
     missing_set = np.argwhere(np.isnan(X))
     assert np.isnan(X[0][1]), "first missing pair is not missing"
     # Pick 20th missing pair because it has the first feasible output
@@ -50,10 +51,19 @@ def test_predict(snn_model: SNN):
 
 
 @pytest.mark.parametrize("k", [2, 4, 5])
-def test_split(snn_model: SNN, test_anchor_rows: list, k: int):
+def test_split(snn_model: SNN, test_anchor_rows: ndarray, k: int):
     anchor_rows_splits = list(snn_model._split(test_anchor_rows, k=k))
     quotient, remainder = divmod(len(test_anchor_rows), k)
     assert len(anchor_rows_splits) == k, "wrong number of splits"
     for idx, split in enumerate(anchor_rows_splits):
         expected_len = quotient + 1 if idx < remainder else quotient
         assert len(split) == expected_len
+
+
+def test_model_repr(snn_model: SNN):
+    assert str(snn_model) == (
+        "SNN(linear_span_eps=0.1, max_rank=None, max_value=None,"
+        " metric='sales', min_singular_value=1e-07, min_value=None,"
+        " n_neighbors=1, random_splits=False, spectral_t=None, subspace_eps=0.1,"
+        " verbose=False, weights='uniform')"
+    )

@@ -97,6 +97,15 @@ class SNN(WhatIFAlgorithm):
         """
         return str(self)
 
+    def __str__(self):
+        field_list = []
+        for (k, v) in sorted(self.__dict__.items()):
+            if (v is None) or (isinstance(v, (float, int))):
+                field_list.append("%s=%s" % (k, v))
+            elif isinstance(v, str):
+                field_list.append("%s='%s'" % (k, v))
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(field_list))
+
     def _get_tensor(
         self,
         df: pd.DataFrame,
@@ -269,9 +278,7 @@ class SNN(WhatIFAlgorithm):
         """load trained model from bytes"""
         raise NotImplementedError()
 
-    def _initialize(
-        self, X: ndarray, missing_set: ndarray
-    ) -> Tuple[ndarray, ndarray]:
+    def _initialize(self, X: ndarray, missing_set: ndarray) -> Tuple[ndarray, ndarray]:
         # check and prepare data
         X = self._prepare_input_data(X, missing_set)
         # check weights
@@ -309,15 +316,6 @@ class SNN(WhatIFAlgorithm):
         if self.verbose:
             print("[SNN] complete")
         return X_imputed
-
-    def __str__(self):
-        field_list = []
-        for (k, v) in sorted(self.__dict__.items()):
-            if (v is None) or (isinstance(v, (float, int))):
-                field_list.append("%s=%s" % (k, v))
-            elif isinstance(v, str):
-                field_list.append("%s='%s'" % (k, v))
-        return "%s(%s)" % (self.__class__.__name__, ", ".join(field_list))
 
     def _check_input_matrix(self, X: ndarray, missing_mask: ndarray) -> None:
         """
@@ -375,6 +373,23 @@ class SNN(WhatIFAlgorithm):
         obs_cols = frozenset(np.argwhere(~np.isnan(X[missing_row, :])).flatten())
         return self._get_anchors(X, obs_rows, obs_cols)
 
+    @staticmethod
+    def _find_max_clique(G: nx.Graph, n_rows: int):
+        cliques = list(find_cliques(G))
+        d_min = 0
+        max_clique_rows_idx = False
+        max_clique_cols_idx = False
+        for clique in cliques:
+            clique = np.sort(clique)
+            clique_rows_idx = clique[clique < n_rows]
+            clique_cols_idx = clique[clique >= n_rows] - n_rows
+            d = min(len(clique_rows_idx), len(clique_cols_idx))
+            if d > d_min:
+                d_min = d
+                max_clique_rows_idx = clique_rows_idx
+                max_clique_cols_idx = clique_cols_idx
+        return max_clique_rows_idx, max_clique_cols_idx
+
     @cached(
         cache=dict(),  # type: ignore
         key=lambda self, X, obs_rows, obs_cols: hashkey(obs_rows, obs_cols),
@@ -400,19 +415,7 @@ class SNN(WhatIFAlgorithm):
         # find max clique that yields the most square (nxn) matrix
         ## TODO: would using an approximate alg help?
         #           check: https://networkx.org/documentation/networkx-1.10/reference/generated/networkx.algorithms.approximation.clique.max_clique.html#networkx.algorithms.approximation.clique.max_clique
-        cliques = list(find_cliques(G))
-        d_min = 0
-        max_clique_rows_idx = False
-        max_clique_cols_idx = False
-        for clique in cliques:
-            clique = np.sort(clique)
-            clique_rows_idx = clique[clique < n_rows]
-            clique_cols_idx = clique[clique >= n_rows] - n_rows
-            d = min(len(clique_rows_idx), len(clique_cols_idx))
-            if d > d_min:
-                d_min = d
-                max_clique_rows_idx = clique_rows_idx
-                max_clique_cols_idx = clique_cols_idx
+        max_clique_rows_idx, max_clique_cols_idx = SNN._find_max_clique(G, n_rows)
 
         # determine model learning rows & cols
         anchor_rows = _obs_rows[max_clique_rows_idx]
