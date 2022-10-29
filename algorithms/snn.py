@@ -106,45 +106,6 @@ class SNN(WhatIFAlgorithm):
                 field_list.append("%s='%s'" % (k, v))
         return "%s(%s)" % (self.__class__.__name__, ", ".join(field_list))
 
-    def _get_tensor(
-        self,
-        df: pd.DataFrame,
-        unit_column: str,
-        time_column: str,
-        actions: List[str],
-        metrics: List[str],
-    ) -> Tuple[ndarray, int, int, int]:
-        units = df[unit_column].unique()
-        N = len(units)
-        timesteps = df[time_column].unique()
-        T = len(timesteps)
-        list_of_actions = df[actions].drop_duplicates().agg("-".join, axis=1).values
-        I = len(list_of_actions)
-        self.actions_dict = dict(zip(list_of_actions, np.arange(I)))
-
-        # init tensors
-        tensor = np.full([N, T, I], np.nan)
-        # get tensor values
-        metric_matrix_df = df.pivot(
-            index=unit_column, columns=time_column, values=metrics[0]
-        )
-        self.units_dict = dict(zip(metric_matrix_df.index, np.arange(N)))
-        self.time_dict = dict(zip(metric_matrix_df.columns, np.arange(T)))
-
-        df["intervention_assignment"] = (
-            df[actions].agg("-".join, axis=1).map(self.actions_dict).values
-        )
-        self.true_intervention_assignment_matrix = df.pivot(
-            index=unit_column, columns=time_column, values="intervention_assignment"
-        ).values
-
-        metric_matrix = metric_matrix_df.values
-        for action_idx in range(I):
-            tensor[
-                self.true_intervention_assignment_matrix == action_idx, action_idx
-            ] = metric_matrix[self.true_intervention_assignment_matrix == action_idx]
-        return tensor, N, I, T
-
     def fit(
         self,
         df: pd.DataFrame,
@@ -316,6 +277,45 @@ class SNN(WhatIFAlgorithm):
         if self.verbose:
             print("[SNN] complete")
         return X_imputed
+
+    def _get_tensor(
+        self,
+        df: pd.DataFrame,
+        unit_column: str,
+        time_column: str,
+        actions: List[str],
+        metrics: List[str],
+    ) -> Tuple[ndarray, int, int, int]:
+        units = df[unit_column].unique()
+        N = len(units)
+        timesteps = df[time_column].unique()
+        T = len(timesteps)
+        list_of_actions = df[actions].drop_duplicates().agg("-".join, axis=1).values
+        I = len(list_of_actions)
+        self.actions_dict = dict(zip(list_of_actions, np.arange(I)))
+
+        # init tensors
+        tensor = np.full([N, T, I], np.nan)
+        # get tensor values
+        metric_matrix_df = df.pivot(
+            index=unit_column, columns=time_column, values=metrics[0]
+        )
+        self.units_dict = dict(zip(metric_matrix_df.index, np.arange(N)))
+        self.time_dict = dict(zip(metric_matrix_df.columns, np.arange(T)))
+
+        df["intervention_assignment"] = (
+            df[actions].agg("-".join, axis=1).map(self.actions_dict).values
+        )
+        self.true_intervention_assignment_matrix = df.pivot(
+            index=unit_column, columns=time_column, values="intervention_assignment"
+        ).values
+
+        metric_matrix = metric_matrix_df.values
+        for action_idx in range(I):
+            tensor[
+                self.true_intervention_assignment_matrix == action_idx, action_idx
+            ] = metric_matrix[self.true_intervention_assignment_matrix == action_idx]
+        return tensor, N, I, T
 
     def _check_input_matrix(self, X: ndarray, missing_mask: ndarray) -> None:
         """
