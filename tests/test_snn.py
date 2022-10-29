@@ -67,3 +67,27 @@ def test_model_repr(snn_model: SNN):
         " n_neighbors=1, random_splits=False, spectral_t=None, subspace_eps=0.1,"
         " verbose=False, weights='uniform')"
     )
+
+
+#
+# helper functions to test
+# _get_anchors
+# _spectral_rank
+# _universal_rank
+# _pcr
+# _clip
+# _train_error
+# _subspace_inclusion
+# _isfeasible
+
+# _get_beta
+# _synth_neighbor
+# done _predict
+
+# _get_tensor
+# _check_input_matrix
+# _prepare_input_data
+# _check_weights
+# done _split
+# _find_anchors
+# _find_max_clique

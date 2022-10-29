@@ -506,10 +506,9 @@ class SNN(WhatIFAlgorithm):
         """
         # linear span test
         ls_feasible = True if train_error <= self.linear_span_eps else False
-
         # subspace test
         s_feasible = True if subspace_inclusion_stat <= self.subspace_eps else False
-        return True if (ls_feasible and s_feasible) else False
+        return ls_feasible and s_feasible
 
     @cached(
         cache=dict(),  # type: ignore
