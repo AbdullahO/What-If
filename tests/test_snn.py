@@ -1,9 +1,11 @@
 import os
+from typing import Tuple
 
+import networkx as nx
 import numpy as np
-from numpy import ndarray
 import pandas as pd
 import pytest
+from numpy import ndarray
 
 from algorithms.snn import SNN
 
@@ -38,14 +40,43 @@ def snn_model() -> SNN:
     return model
 
 
-def test_predict(snn_model: SNN):
+@pytest.fixture(scope="session")
+def snn_model_matrix(snn_model: SNN) -> ndarray:
     X = snn_model.matrix
     assert X is not None
+    return X
+
+
+@pytest.fixture(scope="session")
+def missing_set(snn_model_matrix: ndarray) -> ndarray:
+    X = snn_model_matrix
     missing_set = np.argwhere(np.isnan(X))
-    assert np.isnan(X[0][1]), "first missing pair is not missing"
+    missing_row, missing_col = missing_set[0]
+    assert np.isnan(X[missing_row, missing_col]), "first missing pair is not missing"
+    return missing_set
+
+
+@pytest.fixture(scope="session")
+def example_missing_pair(missing_set: ndarray) -> ndarray:
     # Pick 20th missing pair because it has the first feasible output
-    missing_pair = missing_set[20]
-    prediction, feasible = snn_model._predict(X, missing_pair)
+    return missing_set[20]
+
+
+@pytest.fixture(scope="session")
+def example_obs_rows_and_cols(
+    snn_model_matrix: ndarray, example_missing_pair: ndarray
+) -> Tuple[frozenset, frozenset]:
+    X = snn_model_matrix
+    missing_row, missing_col = example_missing_pair
+    example_obs_rows = frozenset(np.argwhere(~np.isnan(X[:, missing_col])).flatten())
+    example_obs_cols = frozenset(np.argwhere(~np.isnan(X[missing_row, :])).flatten())
+    return example_obs_rows, example_obs_cols
+
+
+def test_predict(
+    snn_model: SNN, snn_model_matrix: ndarray, example_missing_pair: ndarray
+):
+    prediction, feasible = snn_model._predict(snn_model_matrix, example_missing_pair)
     assert feasible, "prediction not feasible"
     assert prediction.round(6) == 48407.449874, "prediction has changed"
 
@@ -69,6 +100,63 @@ def test_model_repr(snn_model: SNN):
     )
 
 
+def test_find_max_clique(
+    snn_model_matrix: ndarray, example_obs_rows_and_cols: Tuple[frozenset, frozenset]
+):
+    obs_rows, obs_cols = example_obs_rows_and_cols
+    _obs_rows = np.array(list(obs_rows), dtype=int)
+    _obs_cols = np.array(list(obs_cols), dtype=int)
+
+    # create bipartite incidence matrix
+    X = snn_model_matrix
+    B = X[_obs_rows]
+    B = B[:, _obs_cols]
+    assert np.any(np.isnan(B)), "B already fully connected"
+    B[np.isnan(B)] = 0
+    (n_rows, n_cols) = B.shape
+
+    row_block_size = (n_rows, n_rows)
+    col_block_size = (n_cols, n_cols)
+
+    # No connections (all missing)
+    A = np.block(
+        [
+            [np.ones(row_block_size), np.zeros_like(B)],
+            [np.zeros_like(B.T), np.ones(col_block_size)],
+        ]
+    )
+    G = nx.from_numpy_array(A)
+    max_clique_rows_idx, max_clique_cols_idx = SNN._find_max_clique(G, n_rows)
+    error_message = "Should return False for no clique"
+    assert max_clique_rows_idx is False, error_message
+    assert max_clique_cols_idx is False, error_message
+
+    # real bipartite graph
+    A = np.block([[np.ones(row_block_size), B], [B.T, np.ones(col_block_size)]])
+    G = nx.from_numpy_array(A)
+    max_clique_rows_idx, max_clique_cols_idx = SNN._find_max_clique(G, n_rows)
+    error_message = "Should return ndarray"
+    assert isinstance(max_clique_rows_idx, ndarray), error_message
+    assert isinstance(max_clique_cols_idx, ndarray), error_message
+    assert max_clique_rows_idx.shape == (35,)
+    assert max_clique_cols_idx.shape == (10,)
+
+    # Fully connected (none missing)
+    A = np.block(
+        [
+            [np.ones(row_block_size), np.ones_like(B)],
+            [np.ones_like(B.T), np.ones(col_block_size)],
+        ]
+    )
+    G = nx.from_numpy_array(A)
+    max_clique_rows_idx, max_clique_cols_idx = SNN._find_max_clique(G, n_rows)
+    error_message = "Should return ndarray"
+    assert isinstance(max_clique_rows_idx, ndarray), error_message
+    assert isinstance(max_clique_cols_idx, ndarray), error_message
+    assert max_clique_rows_idx.shape == (35,)
+    assert max_clique_cols_idx.shape == (50,)
+    # _obs_cols.shape == (50,)
+
 #
 # helper functions to test
 # _get_anchors
@@ -90,4 +178,4 @@ def test_model_repr(snn_model: SNN):
 # _check_weights
 # done _split
 # _find_anchors
-# _find_max_clique
+# done _find_max_clique
