@@ -97,6 +97,15 @@ class SNN(WhatIFAlgorithm):
         """
         return str(self)
 
+    def __str__(self):
+        field_list = []
+        for (k, v) in sorted(self.__dict__.items()):
+            if (v is None) or (isinstance(v, (float, int))):
+                field_list.append("%s=%s" % (k, v))
+            elif isinstance(v, str):
+                field_list.append("%s='%s'" % (k, v))
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(field_list))
+
     def fit(
         self,
         df: pd.DataFrame,
@@ -123,6 +132,160 @@ class SNN(WhatIFAlgorithm):
         # convert time to datetime column
         df[time_column] = pd.to_datetime(df[time_column])
         # get tensor dimensions
+        tensor, N, I, T = self._get_tensor(
+            df, unit_column, time_column, actions, metrics
+        )
+
+        # TODO: only save/load one of these representations
+        # tensor to matrix
+        self.matrix = tensor.reshape([N, I * T])
+
+        # fill matrix
+        self.matrix_full = self._fit_transform(self.matrix)
+
+        # reshape matrix
+        self.tensor = self.matrix_full.reshape([N, T, I])
+
+    def query(
+        self,
+        units: List[int],
+        time: List[str],
+        metric: str,
+        action: str,
+        action_time_range: List[str],
+    ) -> pd.DataFrame:
+        """returns answer to what if query"""
+        units_dict = self.units_dict
+        if units_dict is None:
+            raise Exception("self.units_dict is None, have you called fit()?")
+
+        time_dict = self.time_dict
+        if time_dict is None:
+            raise Exception("self.time_dict is None, have you called fit()?")
+
+        actions_dict = self.actions_dict
+        if actions_dict is None:
+            raise Exception("self.actions_dict is None, have you called fit()?")
+
+        # TODO: validate this
+        true_intervention_assignment_matrix = self.true_intervention_assignment_matrix
+
+        # TODO: validate this
+        tensor = self.tensor
+
+        # TODO: NEED TO LOAD everything above this for prediction
+
+        # Get the units time, action, and action_time_range indices
+        unit_idx = [units_dict[u] for u in units]
+        # convert to timestamp
+        _time = [pd.Timestamp(t) for t in time]
+        # get all timesteps in range
+        timesteps = [t for t in time_dict.keys() if t <= _time[1] and t >= _time[0]]
+        # get idx
+        time_idx = [time_dict[t] for t in timesteps]
+
+        # convert to timestamp
+        _action_time_range = [pd.Timestamp(t) for t in action_time_range]
+        # get all timesteps in action range
+        action_timesteps = [
+            t
+            for t in time_dict.keys()
+            if t <= _action_time_range[1] and t >= _action_time_range[0]
+        ]
+        # get idx
+        action_time_idx = [time_dict[t] for t in action_timesteps]
+        # get action idx
+        action_idx = actions_dict[action]
+        # Get default actions assignment for units of interest
+        assignment = np.array(true_intervention_assignment_matrix[unit_idx, :])
+        # change assignment according to the requested action range
+        assignment[:, action_time_idx] = action_idx
+        # get it for only the time frame of interest
+        assignment = assignment[:, time_idx]
+
+        # Get the right tensor slices |request units| x |request time range| x |actions|
+        tensor_unit_time = tensor[unit_idx, :][:, time_idx, :]
+        # Select the right matrix based on the actions selected
+        assignment = assignment.reshape([assignment.shape[0], assignment.shape[1], 1])
+        selected_matrix = np.take_along_axis(tensor_unit_time, assignment, axis=2)[
+            :, :, 0
+        ]
+
+        # return unit X time DF
+        out_df = pd.DataFrame(data=selected_matrix, index=units, columns=timesteps)
+        return out_df
+
+    def diagnostics(self):
+        """returns method-specifc diagnostics"""
+        raise NotImplementedError()
+
+    def summary(self):
+        """returns method-specifc summary"""
+        raise NotImplementedError()
+
+    def save(self, path):
+        """save trained model"""
+        raise NotImplementedError()
+
+    def save_binary(self, path):
+        """save trained model to bytes"""
+        raise NotImplementedError()
+
+    def load(self, path):
+        """load model from file"""
+        raise NotImplementedError()
+
+    def load_binary(self, path):
+        """load trained model from bytes"""
+        raise NotImplementedError()
+
+    def _initialize(self, X: ndarray, missing_set: ndarray) -> Tuple[ndarray, ndarray]:
+        # check and prepare data
+        X = self._prepare_input_data(X, missing_set)
+        # check weights
+        self.weights = self._check_weights(self.weights)
+        # initialize
+        X_imputed = X.copy()
+        self.feasible = np.empty(X.shape)
+        self.feasible.fill(np.nan)
+        return X, X_imputed
+
+    def _fit_transform(self, X: ndarray, test_set: Optional[ndarray] = None) -> ndarray:
+        """
+        complete missing entries in matrix
+        """
+        missing_set = test_set
+        if missing_set is None:
+            missing_set = np.argwhere(np.isnan(X))
+        num_missing = len(missing_set)
+
+        X, X_imputed = self._initialize(X, missing_set)
+
+        # complete missing entries
+        for (i, missing_pair) in enumerate(missing_set):
+            if self.verbose:
+                print("[SNN] iteration {} of {}".format(i + 1, num_missing))
+
+            # predict missing entry
+            (pred, feasible) = self._predict(X, missing_pair=missing_pair)
+
+            # store in imputed matrices
+            (missing_row, missing_col) = missing_pair
+            X_imputed[missing_row, missing_col] = pred
+            self.feasible[missing_row, missing_col] = feasible
+
+        if self.verbose:
+            print("[SNN] complete")
+        return X_imputed
+
+    def _get_tensor(
+        self,
+        df: pd.DataFrame,
+        unit_column: str,
+        time_column: str,
+        actions: List[str],
+        metrics: List[str],
+    ) -> Tuple[ndarray, int, int, int]:
         units = df[unit_column].unique()
         N = len(units)
         timesteps = df[time_column].unique()
@@ -152,137 +315,7 @@ class SNN(WhatIFAlgorithm):
             tensor[
                 self.true_intervention_assignment_matrix == action_idx, action_idx
             ] = metric_matrix[self.true_intervention_assignment_matrix == action_idx]
-
-        # tensor to matrix
-        self.matrix = tensor.reshape([N, I * T])
-
-        # fill matrix
-        self.matrix_full = self._fit_transform(self.matrix)
-
-        # reshape matrix
-        self.tensor = self.matrix_full.reshape([N, T, I])
-
-    def query(
-        self,
-        units: List[int],
-        time: List[str],
-        metric: str,
-        action: str,
-        action_time_range: List[str],
-    ) -> pd.DataFrame:
-        """returns answer to what if query"""
-        if self.units_dict is None:
-            raise Exception("self.units_dict is None, have you called fit()?")
-
-        if self.time_dict is None:
-            raise Exception("self.time_dict is None, have you called fit()?")
-
-        if self.actions_dict is None:
-            raise Exception("self.actions_dict is None, have you called fit()?")
-
-        # Get the units time, action, and action_time_range indices
-        unit_idx = [self.units_dict[u] for u in units]
-        # convert to timestamp
-        _time = [pd.Timestamp(t) for t in time]
-        # get all timesteps in range
-        timesteps = [
-            t for t in self.time_dict.keys() if t <= _time[1] and t >= _time[0]
-        ]
-        # get idx
-        time_idx = [self.time_dict[t] for t in timesteps]
-
-        # convert to timestamp
-        _action_time_range = [pd.Timestamp(t) for t in action_time_range]
-        # get all timesteps in action range
-        action_timesteps = [
-            t
-            for t in self.time_dict.keys()
-            if t <= _action_time_range[1] and t >= _action_time_range[0]
-        ]
-        # get idx
-        action_time_idx = [self.time_dict[t] for t in action_timesteps]
-        # get action idx
-        action_idx = self.actions_dict[action]
-        # Get default actions assignment for units of interest
-        assignment = np.array(self.true_intervention_assignment_matrix[unit_idx, :])
-        # change assignment according to the requested action range
-        assignment[:, action_time_idx] = action_idx
-        # get it for only the time frame of interest
-        assignment = assignment[:, time_idx]
-
-        # Get the right tensor slices |request units| x |request time range| x |actions|
-        tensor_unit_time = self.tensor[unit_idx, :][:, time_idx, :]
-        # Select the right matrix based on the actions selected
-        assignment = assignment.reshape([assignment.shape[0], assignment.shape[1], 1])
-        selected_matrix = np.take_along_axis(tensor_unit_time, assignment, axis=2)[
-            :, :, 0
-        ]
-
-        # return unit X time DF
-        out_df = pd.DataFrame(data=selected_matrix, index=units, columns=timesteps)
-        return out_df
-
-    def diagnostics(self):
-        """returns method-specifc diagnostics"""
-        raise NotImplementedError()
-
-    def summary(self):
-        """returns method-specifc summary"""
-        raise NotImplementedError()
-
-    def save(self, path):
-        """save trained model"""
-        raise NotImplementedError()
-
-    def load(self, path):
-        """load model"""
-        raise NotImplementedError()
-
-    def _fit_transform(self, X: ndarray, test_set: Optional[ndarray] = None) -> ndarray:
-        """
-        complete missing entries in matrix
-        """
-        # get missing entries to impute
-        missing_set = test_set if test_set is not None else np.argwhere(np.isnan(X))
-        num_missing = len(missing_set)
-
-        # check and prepare data
-        X = self._prepare_input_data(X, missing_set)
-
-        # check weights
-        self.weights = self._check_weights(self.weights)
-
-        # initialize
-        X_imputed = X.copy()
-        std_matrix = np.zeros(X.shape)
-        self.feasible = np.empty(X.shape)
-        self.feasible.fill(np.nan)
-
-        # complete missing entries
-        for (i, missing_pair) in enumerate(missing_set):
-            if self.verbose:
-                print("[SNN] iteration {} of {}".format(i + 1, num_missing))
-
-            # predict missing entry
-            (pred, feasible) = self._predict(X, missing_pair=missing_pair)
-
-            # store in imputed matrices
-            (missing_row, missing_col) = missing_pair
-            X_imputed[missing_row, missing_col] = pred
-            self.feasible[missing_row, missing_col] = feasible
-
-        if self.verbose:
-            print("[SNN] complete")
-        return X_imputed
-
-    def __str__(self):
-        field_list = []
-        for (k, v) in sorted(self.__dict__.items()):
-            if (v is None) or (isinstance(v, (float, int))):
-                field_list.append("%s=%s" % (k, v))
-            elif isinstance(v, str):
-                field_list.append("%s='%s'" % (k, v))
-        return "%s(%s)" % (self.__class__.__name__, ", ".join(field_list))
+        return tensor, N, I, T
 
     def _check_input_matrix(self, X: ndarray, missing_mask: ndarray) -> None:
         """
@@ -340,6 +373,23 @@ class SNN(WhatIFAlgorithm):
         obs_cols = frozenset(np.argwhere(~np.isnan(X[missing_row, :])).flatten())
         return self._get_anchors(X, obs_rows, obs_cols)
 
+    @staticmethod
+    def _find_max_clique(G: nx.Graph, n_rows: int):
+        cliques = list(find_cliques(G))
+        d_min = 0
+        max_clique_rows_idx = False
+        max_clique_cols_idx = False
+        for clique in cliques:
+            clique = np.sort(clique)
+            clique_rows_idx = clique[clique < n_rows]
+            clique_cols_idx = clique[clique >= n_rows] - n_rows
+            d = min(len(clique_rows_idx), len(clique_cols_idx))
+            if d > d_min:
+                d_min = d
+                max_clique_rows_idx = clique_rows_idx
+                max_clique_cols_idx = clique_cols_idx
+        return max_clique_rows_idx, max_clique_cols_idx
+
     @cached(
         cache=dict(),  # type: ignore
         key=lambda self, X, obs_rows, obs_cols: hashkey(obs_rows, obs_cols),
@@ -365,19 +415,7 @@ class SNN(WhatIFAlgorithm):
         # find max clique that yields the most square (nxn) matrix
         ## TODO: would using an approximate alg help?
         #           check: https://networkx.org/documentation/networkx-1.10/reference/generated/networkx.algorithms.approximation.clique.max_clique.html#networkx.algorithms.approximation.clique.max_clique
-        cliques = list(find_cliques(G))
-        d_min = 0
-        max_clique_rows_idx = False
-        max_clique_cols_idx = False
-        for clique in cliques:
-            clique = np.sort(clique)
-            clique_rows_idx = clique[clique < n_rows]
-            clique_cols_idx = clique[clique >= n_rows] - n_rows
-            d = min(len(clique_rows_idx), len(clique_cols_idx))
-            if d > d_min:
-                d_min = d
-                max_clique_rows_idx = clique_rows_idx
-                max_clique_cols_idx = clique_cols_idx
+        max_clique_rows_idx, max_clique_cols_idx = SNN._find_max_clique(G, n_rows)
 
         # determine model learning rows & cols
         anchor_rows = _obs_rows[max_clique_rows_idx]
@@ -468,10 +506,9 @@ class SNN(WhatIFAlgorithm):
         """
         # linear span test
         ls_feasible = True if train_error <= self.linear_span_eps else False
-
         # subspace test
         s_feasible = True if subspace_inclusion_stat <= self.subspace_eps else False
-        return True if (ls_feasible and s_feasible) else False
+        return ls_feasible and s_feasible
 
     @cached(
         cache=dict(),  # type: ignore
@@ -531,9 +568,7 @@ class SNN(WhatIFAlgorithm):
             weight = (1.0 / d) if d > 0 else sys.float_info.max
         return (pred, feasible, weight)
 
-    def _predict(
-        self, X: ndarray, missing_pair: ndarray
-    ) -> Union[Tuple[float, bool], Tuple[float64, bool]]:
+    def _predict(self, X: ndarray, missing_pair: ndarray) -> Tuple[float64, bool]:
         """
         combine predictions from all synthetic neighbors
         """
