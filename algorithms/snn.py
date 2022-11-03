@@ -3,12 +3,9 @@ Synthetic Nearest Neighbors algorithm:
 Refactoring the code in https://github.com/deshen24/syntheticNN
 """
 import sys
-import warnings
-from typing import Any, Iterator, List, Optional, Tuple
-
+from typing import Any, Iterator, Optional, Tuple
 import networkx as nx
 import numpy as np
-import sparse
 from cachetools import cached
 from cachetools.keys import hashkey
 from networkx.algorithms.clique import find_cliques  # type: ignore
