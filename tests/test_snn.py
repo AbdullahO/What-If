@@ -31,6 +31,46 @@ def expected_anchor_cols() -> ndarray:
 
 
 @pytest.fixture(scope="session")
+def expected_train_error() -> float:
+    expected_error = 0.00024697
+    return expected_error
+
+
+@pytest.fixture(scope="session")
+def expected_beta() -> ndarray:
+    # fmt: off
+    beta = np.array([
+        0.03070154, 0.02970248, 0.03350305, 0.03175211, 0.03537408,
+        0.0332766 , 0.02949884, 0.02953682, 0.02896898, 0.03344745,
+        0.02941282, 0.03167826, 0.027838  , 0.02940943, 0.02862311,
+        0.03483487, 0.03234598, 0.03033795, 0.02668949, 0.02964231,
+        0.02896066, 0.02836569, 0.02810523, 0.03018553, 0.03194357,
+        0.03099421, 0.02929728, 0.03077091, 0.03290208, 0.03032667,
+        0.03064988, 0.02552543, 0.02972632, 0.03101782, 0.02984139
+    ])
+    # fmt: on
+    assert beta.shape == (35,)
+    return beta
+
+
+@pytest.fixture(scope="session")
+def expected_v_rank() -> ndarray:
+    # fmt: off
+    v_rank = np.array([[
+        -0.17010884, -0.1645733 , -0.18563122, -0.17592975, -0.19599812,
+        -0.18437652, -0.16344502, -0.16365546, -0.16050917, -0.18532319,
+        -0.1629684 , -0.17552058, -0.15424275, -0.1629496 , -0.15859282,
+        -0.19301049, -0.17922021, -0.16809427, -0.14787918, -0.16423993,
+        -0.16046308, -0.15716652, -0.1557234 , -0.16724974, -0.17699057,
+        -0.17173043, -0.16232822, -0.1704932 , -0.18230142, -0.16803178,
+        -0.16982261, -0.1414294 , -0.16470539, -0.17186123, -0.16534298
+    ]])
+    # fmt: on
+    assert v_rank.shape == (1, 35)
+    return v_rank
+
+
+@pytest.fixture(scope="session")
 def snn_model() -> SNN:
     _snn_test_df = pd.read_csv(
         os.path.join(current_dir, "data/stores_sales_simple/stores_sales_simple.csv")
@@ -241,16 +281,35 @@ def test_pcr():
     """Test the _pcr function"""
 
 
-def test_clip():
-    """Test the _clip function"""
-
-
 def test_train_error():
     """Test the _train_error function"""
 
 
-def test_get_beta():
+def test_get_beta(
+    snn_model: SNN,
+    snn_model_matrix: ndarray,
+    example_missing_pair: ndarray,
+    expected_anchor_rows: ndarray,
+    expected_anchor_cols: ndarray,
+    expected_beta: ndarray,
+    expected_v_rank: ndarray,
+    expected_train_error: float,
+):
     """Test the _get_beta function"""
+    snn_model._get_beta.cache.clear()
+    missing_row, _missing_col = example_missing_pair
+    _anchor_rows = frozenset(expected_anchor_rows)
+    _anchor_cols = frozenset(expected_anchor_cols)
+    beta, v_rank, train_error = snn_model._get_beta(
+        snn_model_matrix, missing_row, _anchor_rows, _anchor_cols
+    )
+    assert np.allclose(beta, expected_beta), "v_rank not as expected"
+    assert np.allclose(v_rank, expected_v_rank), "v_rank not as expected"
+    assert train_error.round(8) == expected_train_error, "train_error not as expected"
+
+
+def test_clip():
+    """Test the _clip function"""
 
 
 def test_synth_neighbor():
