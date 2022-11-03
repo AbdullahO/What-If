@@ -43,6 +43,12 @@ def expected_s_rank() -> float:
 
 
 @pytest.fixture(scope="session")
+def expected_pred_synth_neighbor() -> float:
+    pred = 48407.44987403
+    return pred
+
+
+@pytest.fixture(scope="session")
 def expected_u_rank():
     u_rank = np.array(
         [
@@ -400,8 +406,25 @@ def test_clip(snn_model: SNN):
     snn_model.min_value = None
     snn_model.max_value = None
 
-def test_synth_neighbor():
+
+def test_synth_neighbor(
+    snn_model: SNN,
+    snn_model_matrix: ndarray,
+    example_missing_pair: ndarray,
+    expected_anchor_rows: ndarray,
+    expected_anchor_cols: ndarray,
+    expected_pred_synth_neighbor: float,
+):
     """Test the _synth_neighbor function"""
+    pred, feasible, weight = snn_model._synth_neighbor(
+        snn_model_matrix,
+        example_missing_pair,
+        expected_anchor_rows,
+        expected_anchor_cols,
+    )
+    assert pred.round(8) == expected_pred_synth_neighbor, "pred not as expected"
+    assert feasible, "feasible should be True"
+    assert weight == 1.0, "weight not as expected"
 
 
 def test_get_tensor():
