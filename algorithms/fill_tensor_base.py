@@ -308,30 +308,16 @@ class FillTensorBase(WhatIFAlgorithm):
         I = len(list_of_actions)
         self.actions_dict = dict(zip(list_of_actions, np.arange(I)))
 
-        (
-            metric_matrix_df,
-            current_true_intervention_assignment_matrix,
-        ) = self._process_input_df(df, unit_column, time_column, metrics[0], actions)
-
-        # populate units dict
-        units = df[unit_column].unique()
-        N = len(units)
+        # get tensor values
+        metric_matrix_df = df.pivot(
+            index=unit_column, columns=time_column, values=metrics[0]
+        )
         self.units_dict = dict(zip(metric_matrix_df.index, np.arange(N)))
-
-        # populate time dict
-        timesteps = df[time_column].unique()
-        T = len(timesteps)
         self.time_dict = dict(zip(metric_matrix_df.columns, np.arange(T)))
 
-        self.true_intervention_assignment_matrix = (
-            current_true_intervention_assignment_matrix
-        )
-        tensor = self._populate_tensor(
-            self.N,
-            T,
-            self.I,
-            metric_matrix_df,
-            current_true_intervention_assignment_matrix,
+        # add the action_idx to each row
+        df["intervention_assignment"] = (
+            df[actions].agg("-".join, axis=1).map(self.actions_dict).values
         )
 
         return tensor
@@ -377,17 +363,21 @@ class FillTensorBase(WhatIFAlgorithm):
         new_tensor = self._get_partial_tensor(new_df)
         new_time_factors = self.update_time_factors(new_tensor)
         # update nan mask
+        self._update_nan_mask(new_tensor)
+
+    def _update_nan_mask(self, new_tensor):
         ## TODO: update nan mask based on original fit:
         #        1. if intervention/uni/time never observed --> nan (for all methods)
         #        2. if (time,intervention) never observed --> nan (for SNN)
         #        3. if (time,unit) never observed --> nan (for SNN)
+
         assert (
             self.tensor_nans is not None
         ), "self.tensor_nans is None, have you called fit()?"
         old_shape = self.tensor_nans.shape
         self.tensor_nans.shape = (
             old_shape[0],
-            new_time_factors.shape[0],
+            new_tensor.shape[1] + old_shape[1],
             old_shape[2],
         )
 

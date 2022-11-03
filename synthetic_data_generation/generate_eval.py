@@ -1,4 +1,3 @@
-import pandas as pd
 import numpy as np
 from synthetic_data_generation.syn_gyn_module import (
     Metric,
@@ -8,7 +7,11 @@ from synthetic_data_generation.syn_gyn_module import (
 )
 
 
-def get_sales_data(num_units=100, num_timesteps=50):
+def get_sales_data(seed, T, N):
+    np.random.seed(seed)
+    # Time
+    max_timesteps = T
+
     # Metrics
     metric1 = Metric("sales", metric_range=[0, 100000])
     metrics = [metric1]
@@ -34,8 +37,8 @@ def get_sales_data(num_units=100, num_timesteps=50):
 
     # initalize and generate
     data = SyntheticDataModule(
-        num_units,
-        num_timesteps,
+        N,
+        max_timesteps,
         num_interventions,
         metrics,
         unit_cov,
@@ -43,8 +46,8 @@ def get_sales_data(num_units=100, num_timesteps=50):
         freq="1D",
     )
 
-    # generate initial data
-    data.generate()
+    # generate initial factors
+    data.generate_init_factors()
 
     # Now we will define differen subpopulations andd specific effects on them for each intervention
 
@@ -67,13 +70,11 @@ def get_sales_data(num_units=100, num_timesteps=50):
     return data
 
 
-def sales_data_staggering_assignment(seed=0, num_units=100, num_timesteps=50):
+def sales_data_staggering_assignment(data, seed=0, T=50):
 
     np.random.seed(seed)
-    data = get_sales_data(num_units, num_timesteps)
     subpop1, subpop2, subpop3 = data.subpopulations_funcs
-    num_timesteps = data.num_timesteps
-    period_1 = {"intervention_assignment": "control", "until": num_timesteps // 3}
+    period_1 = {"intervention_assignment": "control", "until": T // 4}
 
     intervention_assignment = "cov_unit"
     selection_subpop = {
@@ -83,7 +84,7 @@ def sales_data_staggering_assignment(seed=0, num_units=100, num_timesteps=50):
     }
     period_2 = {
         "intervention_assignment": intervention_assignment,
-        "until": num_timesteps // 2,
+        "until": T // 2,
         "assignment_subpop": selection_subpop,
     }
     selection_subpop = {
@@ -93,7 +94,7 @@ def sales_data_staggering_assignment(seed=0, num_units=100, num_timesteps=50):
     }
     period_3 = {
         "intervention_assignment": intervention_assignment,
-        "until": 2 * num_timesteps // 3,
+        "until": 3 * T // 4,
         "assignment_subpop": selection_subpop,
     }
     selection_subpop = {
@@ -103,35 +104,28 @@ def sales_data_staggering_assignment(seed=0, num_units=100, num_timesteps=50):
     }
     period_4 = {
         "intervention_assignment": intervention_assignment,
-        "until": num_timesteps,
+        "until": T,
         "assignment_subpop": selection_subpop,
     }
 
     periods = [period_1, period_2, period_3, period_4]
-    data.auto_subsample(periods)
 
-    return data
+    return periods
 
 
-def sales_data_random_assignment(seed=0, num_units=100, num_timesteps=50):
+def sales_data_random_assignment(data, seed=0, T=50):
 
     np.random.seed(seed)
-    data = get_sales_data(num_units, num_timesteps)
-    num_timesteps = data.num_timesteps
-    period_1 = {"intervention_assignment": "random", "until": num_timesteps}
+    period_1 = {"intervention_assignment": "random", "until": T}
     periods = [period_1]
-    data.auto_subsample(periods)
-
-    return data
+    return periods
 
 
-def sales_data_si_assignment(seed=0, num_units=100, num_timesteps=50):
+def sales_data_si_assignment(data, seed=0, T=50):
 
     np.random.seed(seed)
-    data = get_sales_data(num_units, num_timesteps)
     subpop1, subpop2, subpop3 = data.subpopulations_funcs
-    num_timesteps = data.num_timesteps
-    period_1 = {"intervention_assignment": "control", "until": 2 * num_timesteps // 5}
+    period_1 = {"intervention_assignment": "control", "until": T // 2}
     intervention_assignment = "cov_unit"
     selection_subpop = {
         subpop1: [0.3, 0.3, 0.4],
@@ -140,10 +134,8 @@ def sales_data_si_assignment(seed=0, num_units=100, num_timesteps=50):
     }
     period_2 = {
         "intervention_assignment": intervention_assignment,
-        "until": num_timesteps,
+        "until": T,
         "assignment_subpop": selection_subpop,
     }
     periods = [period_1, period_2]
-    data.auto_subsample(periods)
-
-    return data
+    return periods

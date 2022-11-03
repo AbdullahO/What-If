@@ -15,6 +15,7 @@ from synthetic_data_generation.generate_eval import (
     sales_data_staggering_assignment,
     sales_data_si_assignment,
     sales_data_random_assignment,
+    get_sales_data,
 )
 
 Metric = namedtuple(
@@ -56,7 +57,38 @@ def create_parser():
     return parser
 
 
-def evaluate_partial(data_gen, algorithm, repeat, datasize, chunk_size):
+def get_mask(
+    data_gen,
+    data_assignment,
+    algorithm,
+    datasize,
+):
+    # generate data
+    data = data_gen(seed=0, N=100, T=datasize)
+    model = ALG_REGISTRY[algorithm](verbose=False)
+    tensor, full_df = data.generate([0, datasize - 1])
+    periods = data_assignment(data, seed=0, T=datasize - 1)
+    _, df = data.auto_subsample(periods, tensor, full_df)
+    model.fit(
+        df=df,
+        unit_column="unit_id",
+        time_column="time",
+        metrics=["sales"],
+        actions=["ads"],
+    )
+    return model.tensor_nans.todense()
+
+
+def evaluate_partial(
+    data_gen,
+    data_assignment,
+    algorithm,
+    repeat,
+    datasize,
+    chunk_size,
+    tensor_nan,
+    init_points=100,
+):
     # generate data
     train_time = np.zeros([repeat])
     query_time = np.zeros([repeat])
@@ -65,22 +97,36 @@ def evaluate_partial(data_gen, algorithm, repeat, datasize, chunk_size):
     number_estimated_entries = np.zeros([repeat])
     number_estimated_feasible_entries = np.zeros([repeat])
     for i in range(repeat):
-        data = data_gen(seed=i, num_units=200, num_timesteps=datasize)
-        df = data.ss_df
-        tensor = data.tensor
-        mask = data.mask
-        mask = mask.astype(bool)
+        data = data_gen(seed=i, N=100, T=datasize)
+        if i != 0:
+            if algorithm == "SNN":
+                model._get_anchors.cache.clear()
+                model._get_beta.cache.clear()
+            elif algorithm == "SNNBiclustering":
+                model._map_missing_value.cache.clear()
+                model._get_beta_from_factors.cache.clear()
         model = ALG_REGISTRY[algorithm](verbose=False)
-        timestamps = pd.to_datetime(df.time.unique())
-        no_batches = ceil(datasize / chunk_size)
+        no_batches = ceil((datasize) / chunk_size)
         start = 0
         for batch in range(no_batches):
-            start_time = timestamps[start]
+            # if batch ==0:
+            # end = init_points -1
             end = min(start + chunk_size - 1, datasize - 1)
-            end_time = timestamps[end]
-            df_batch = df.loc[(df.time >= start_time) & (df.time <= end_time)].copy()
+            batch_tensor, full_df = data.generate([start, end])
+            periods = data_assignment(data, seed=i * (batch + 1), T=end - start + 1)
+            # else:
+            #     end = min(start + chunk_size - 1, datasize - 1)
+            #     batch_tensor, full_df = data.generate([start, end])
+            #     periods = data_assignment(data, seed=i * (batch + 1), T=end - start + 1)
+
+            ss_tensor, df_batch = data.auto_subsample(periods, batch_tensor, full_df)
+            batch_mask = data.mask
+
+            batch_mask = batch_mask.astype(bool)
             t = time.perf_counter()
             if batch == 0:
+                mask = batch_mask.copy()
+                tensor = batch_tensor.copy()
                 model.fit(
                     df=df_batch,
                     unit_column="unit_id",
@@ -88,9 +134,12 @@ def evaluate_partial(data_gen, algorithm, repeat, datasize, chunk_size):
                     metrics=["sales"],
                     actions=["ads"],
                 )
+                train_time[i] = time.perf_counter() - t
             else:
+                mask = np.concatenate([mask, batch_mask], axis=1)
+                tensor = np.concatenate([tensor, batch_tensor], axis=1)
                 model.partial_fit(df_batch)
-            train_time[i] = time.perf_counter() - t
+                train_time[i] = time.perf_counter() - t
             t = time.perf_counter()
             model.query(
                 [0],
@@ -100,18 +149,24 @@ def evaluate_partial(data_gen, algorithm, repeat, datasize, chunk_size):
                 ["2020-01-01", " 2020-01-02"],
             )
             query_time[i] = time.perf_counter() - t
-            start += chunk_size
+            start = end + 1
 
         # adjust tensor
         indices = [model.actions_dict[action] for action in ["ad 0", "ad 1", "ad 2"]]
         _tensor_est = model.get_tensor_from_factors()
         tensor_est = _tensor_est[:, :, indices]
+        if tensor_nan is not None:
+            tensor_est[tensor_nan] = np.nan
         # accuracy
+        tensor = tensor[:, :-1, :]
+        mask = mask[:, :-1, :]
+        tensor_est = tensor_est[:, :-1, :]
         notnan = ~np.isnan(tensor_est)
         r2[i] = r2_score(
             tensor[notnan, 0][~mask[notnan, 0]].flatten(),
             tensor_est[notnan][~mask[notnan, 0]].flatten(),
         )
+        print(r2[i])
         mse[i] = np.nanmean(
             np.square(
                 tensor[..., 0][~mask[..., 0]].flatten()
@@ -136,13 +191,13 @@ def main():
     args = parser.parse_args()
 
     # data examples
-    datasets_generators = [
+    datasets_assignment_generators = [
         sales_data_si_assignment,
         sales_data_staggering_assignment,
         sales_data_random_assignment,
     ]
     data_names = ["SI sparsity", "staggered", "random"]
-    num_datasets = len(datasets_generators)
+    num_datasets = len(datasets_assignment_generators)
 
     # init results dataframe
     res_df = pd.DataFrame(
@@ -166,10 +221,18 @@ def main():
     mse = np.zeros([num_datasets, args.repeat])
     number_estimated_entries = np.zeros([num_datasets, args.repeat])
     number_estimated_feasible_entries = np.zeros([num_datasets, args.repeat])
-
-    for k, data_gen in enumerate(datasets_generators[:]):
+    data_gen = get_sales_data
+    for k, data_assignment in enumerate(datasets_assignment_generators[:]):
+        if k < 2:
+            continue
         for alg in args.algorithms:
+            if data_names[k] != "random":
+                nan_mask = get_mask(data_gen, data_assignment, "SNN", args.datasize)
+            else:
+                nan_mask = None
+
             for chunk_size in args.chunksize:
+                ## Temp solution for mask problem
                 (
                     train_time[k, :],
                     query_time[k, :],
@@ -178,7 +241,13 @@ def main():
                     number_estimated_entries[k, :],
                     number_estimated_feasible_entries[k, :],
                 ) = evaluate_partial(
-                    data_gen, alg, args.repeat, args.datasize, chunk_size
+                    data_gen,
+                    data_assignment,
+                    alg,
+                    args.repeat,
+                    args.datasize,
+                    chunk_size,
+                    tensor_nan=nan_mask,
                 )
                 print(f"Evaluate {alg} for {data_names[k]}")
                 print(f"Train time: \t {train_time[k,:].mean()}")
