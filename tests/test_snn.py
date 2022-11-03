@@ -13,6 +13,14 @@ current_dir = os.getcwd()
 
 
 @pytest.fixture(scope="session")
+def snn_expected_query_output() -> pd.DataFrame:
+    query_output = pd.read_pickle(
+        os.path.join(current_dir, "data/stores_sales_simple/snn_query_output.pkl")
+    )
+    return query_output
+
+
+@pytest.fixture(scope="session")
 def expected_anchor_rows() -> ndarray:
     # fmt: off
     anchor_rows = np.array([
@@ -197,13 +205,17 @@ def test_split(snn_model: SNN, expected_anchor_rows: ndarray, k: int):
         assert len(split) == expected_len
 
 
-def test_model_repr(snn_model: SNN):
+def test_model_str(snn_model: SNN):
     assert str(snn_model) == (
         "SNN(linear_span_eps=0.1, max_rank=None, max_value=None,"
         " metric='sales', min_singular_value=1e-07, min_value=None,"
         " n_neighbors=1, random_splits=False, spectral_t=None, subspace_eps=0.1,"
         " verbose=False, weights='uniform')"
     )
+
+
+def test_model_repr(snn_model: SNN):
+    assert repr(snn_model) == str(snn_model)
 
 
 def test_find_max_clique(
@@ -513,3 +525,21 @@ def test_check_weights(snn_model: SNN, weights):
     else:
         with pytest.raises(ValueError):
             snn_model._check_weights(weights)
+
+
+def test_fit(snn_model: SNN, snn_expected_query_output: pd.DataFrame):
+    model_query_output = snn_model.query(
+        [0],
+        ["2020-01-10", " 2020-02-19"],
+        "sales",
+        "ad 0",
+        ["2020-01-10", " 2020-02-19"],
+    )
+    assert snn_expected_query_output.round(5).equals(
+        model_query_output.round(5)
+    ), "Query output difference"
+    assert snn_model.actions_dict == {
+        "ad 2": 0,
+        "ad 0": 1,
+        "ad 1": 2,
+    }, "Actions dict difference"
