@@ -455,6 +455,7 @@ def test_get_tensor(snn_model_matrix: ndarray):
     error_message = "_get_tensor matrix output not as expected"
     assert np.allclose(matrix, snn_model_matrix, equal_nan=True), error_message
 
+
 def test_fit_transform(snn_model_matrix_full):
     """Test the _fit_transform function"""
     # Don't use snn_model fixture here
@@ -468,20 +469,35 @@ def test_fit_transform(snn_model_matrix_full):
     assert np.allclose(output, snn_model_matrix_full, equal_nan=True), error_message
 
 
-def test_check_input_matrix(snn_model: SNN):
+def test_check_input_matrix(snn_model: SNN, snn_model_matrix: ndarray):
     """Test the _check_input_matrix function"""
+    missing_mask = np.argwhere(np.isnan(snn_model_matrix))
 
-    snn_model._check_input_matrix(X, missing_mask)
+    # Should not raise any exceptions
+    snn_model._check_input_matrix(snn_model_matrix, missing_mask)
+
+    # Should raise an error due to missing_mask length
+    m, n = snn_model_matrix.shape
+    with pytest.raises(ValueError):
+        snn_model._check_input_matrix(snn_model_matrix, np.ones(m * n))
+
+    # Should raise an error due to incorrect shape of snn_model_matrix
+    new_shape = (100, 50, 3)
+    with pytest.raises(ValueError):
+        snn_model._check_input_matrix(snn_model_matrix.reshape(new_shape), missing_mask)
 
 
-def test_prepare_input_data(snn_model: SNN):
+def test_prepare_input_data(snn_model: SNN, snn_model_matrix: ndarray):
     """Test the _prepare_input_data function"""
-    snn_model._prepare_input_data(X, missing_mask)
+    missing_mask = np.argwhere(np.isnan(snn_model_matrix))
+    snn_model._prepare_input_data(snn_model_matrix, missing_mask)
 
 
-def test_initialize(snn_model: SNN):
+def test_initialize(snn_model: SNN, snn_model_matrix: ndarray):
     """Test the _initialize function"""
-    snn_model._initialize(X, missing_set)
+    # TODO: should rename to missing_mask in _initialize?
+    missing_set = np.argwhere(np.isnan(snn_model_matrix))
+    snn_model._initialize(snn_model_matrix, missing_set)
 
 
 @pytest.mark.parametrize("weights", ["uniform", "distance", "something else", ""])
