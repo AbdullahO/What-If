@@ -490,14 +490,18 @@ def test_check_input_matrix(snn_model: SNN, snn_model_matrix: ndarray):
 def test_prepare_input_data(snn_model: SNN, snn_model_matrix: ndarray):
     """Test the _prepare_input_data function"""
     missing_mask = np.argwhere(np.isnan(snn_model_matrix))
-    snn_model._prepare_input_data(snn_model_matrix, missing_mask)
+    output = snn_model._prepare_input_data(snn_model_matrix, missing_mask)
+    error_message = "_prepare_input_data output not as expected"
+    assert np.allclose(output, snn_model_matrix, equal_nan=True), error_message
 
 
 def test_initialize(snn_model: SNN, snn_model_matrix: ndarray):
     """Test the _initialize function"""
     # TODO: should rename to missing_mask in _initialize?
     missing_set = np.argwhere(np.isnan(snn_model_matrix))
-    snn_model._initialize(snn_model_matrix, missing_set)
+    X, X_imputed = snn_model._initialize(snn_model_matrix, missing_set)
+    error_message = "_initialize output not as expected"
+    assert np.allclose(X, snn_model_matrix, equal_nan=True), error_message
 
 
 @pytest.mark.parametrize("weights", ["uniform", "distance", "something else", ""])
