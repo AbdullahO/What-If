@@ -389,9 +389,16 @@ def test_get_beta(
     assert train_error.round(8) == expected_train_error, "train_error not as expected"
 
 
-def test_clip():
+def test_clip(snn_model: SNN):
     """Test the _clip function"""
-
+    snn_model.min_value = 1
+    snn_model.max_value = 5
+    assert snn_model._clip(11) == 5, "should clip to max_value"
+    assert snn_model._clip(0) == 1, "should clip to min_value"
+    assert snn_model._clip(-10) == 1, "should clip to min_value"
+    # Put back for other tests. TODO: use a context manager?
+    snn_model.min_value = None
+    snn_model.max_value = None
 
 def test_synth_neighbor():
     """Test the _synth_neighbor function"""
