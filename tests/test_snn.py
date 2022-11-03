@@ -13,7 +13,7 @@ current_dir = os.getcwd()
 
 
 @pytest.fixture(scope="session")
-def test_anchor_rows() -> ndarray:
+def expected_anchor_rows() -> ndarray:
     # fmt: off
     anchor_rows = np.array([
         1,  2,  4,  9, 11, 16, 18, 19, 24, 25, 32, 33, 34, 37, 38, 49, 50,
@@ -22,6 +22,12 @@ def test_anchor_rows() -> ndarray:
     ])
     # fmt: on
     return anchor_rows
+
+
+@pytest.fixture(scope="session")
+def expected_anchor_cols() -> ndarray:
+    anchor_cols = np.array([0, 3, 6, 9, 12, 15, 18, 21, 24, 27])
+    return anchor_cols
 
 
 @pytest.fixture(scope="session")
@@ -45,6 +51,13 @@ def snn_model_matrix(snn_model: SNN) -> ndarray:
     X = snn_model.matrix
     assert X is not None
     return X
+
+
+@pytest.fixture(scope="session")
+def snn_model_matrix_full(snn_model: SNN) -> ndarray:
+    X_full = snn_model.matrix_full
+    assert X_full is not None
+    return X_full
 
 
 @pytest.fixture(scope="session")
@@ -76,15 +89,16 @@ def example_obs_rows_and_cols(
 def test_predict(
     snn_model: SNN, snn_model_matrix: ndarray, example_missing_pair: ndarray
 ):
+    """Test the _predict function"""
     prediction, feasible = snn_model._predict(snn_model_matrix, example_missing_pair)
     assert feasible, "prediction not feasible"
     assert prediction.round(6) == 48407.449874, "prediction has changed"
 
 
 @pytest.mark.parametrize("k", [2, 4, 5])
-def test_split(snn_model: SNN, test_anchor_rows: ndarray, k: int):
-    anchor_rows_splits = list(snn_model._split(test_anchor_rows, k=k))
-    quotient, remainder = divmod(len(test_anchor_rows), k)
+def test_split(snn_model: SNN, expected_anchor_rows: ndarray, k: int):
+    anchor_rows_splits = list(snn_model._split(expected_anchor_rows, k=k))
+    quotient, remainder = divmod(len(expected_anchor_rows), k)
     assert len(anchor_rows_splits) == k, "wrong number of splits"
     for idx, split in enumerate(anchor_rows_splits):
         expected_len = quotient + 1 if idx < remainder else quotient
@@ -157,25 +171,103 @@ def test_find_max_clique(
     assert max_clique_cols_idx.shape == (50,)
     # _obs_cols.shape == (50,)
 
-#
-# helper functions to test
-# _get_anchors
-# _spectral_rank
-# _universal_rank
-# _pcr
-# _clip
-# _train_error
-# _subspace_inclusion
-# _isfeasible
 
-# _get_beta
-# _synth_neighbor
-# done _predict
+def test_get_anchors(
+    snn_model: SNN,
+    snn_model_matrix: ndarray,
+    snn_model_matrix_full: ndarray,
+    example_obs_rows_and_cols: ndarray,
+    expected_anchor_rows: ndarray,
+    expected_anchor_cols: ndarray,
+):
+    """Test the _get_anchors function"""
+    snn_model._get_anchors.cache.clear()
+    obs_rows, obs_cols = example_obs_rows_and_cols
+    anchor_rows, anchor_cols = snn_model._get_anchors(
+        snn_model_matrix, obs_rows, obs_cols
+    )
 
-# _get_tensor
-# _check_input_matrix
-# _prepare_input_data
-# _check_weights
-# done _split
-# _find_anchors
-# done _find_max_clique
+    error_message = "Anchor rows not as expected"
+    assert np.allclose(anchor_rows, expected_anchor_rows), error_message
+    error_message = "Anchor columns not as expected"
+    assert np.allclose(anchor_cols, expected_anchor_cols), error_message
+
+    _obs_rows = np.array(list(obs_rows), dtype=int)
+    _obs_cols = np.array(list(obs_cols), dtype=int)
+    B = snn_model_matrix_full[_obs_rows]
+    B = B[:, _obs_cols]
+    assert not np.any(np.isnan(B)), "snn_model_matrix_full contains NaN"
+
+    # Test matrix_full, which should short circuit and return the input
+    snn_model._get_anchors.cache.clear()
+    anchor_rows, anchor_cols = snn_model._get_anchors(
+        snn_model_matrix_full, obs_rows, obs_cols
+    )
+
+    error_message = "Anchor rows not as expected"
+    assert np.allclose(anchor_rows, _obs_rows), error_message
+    error_message = "Anchor columns not as expected"
+    assert np.allclose(anchor_cols, _obs_cols), error_message
+
+
+def test_find_anchors(
+    snn_model: SNN,
+    snn_model_matrix: ndarray,
+    example_missing_pair: ndarray,
+    expected_anchor_rows: ndarray,
+    expected_anchor_cols: ndarray,
+):
+    """Test the _find_anchors function"""
+    snn_model._get_anchors.cache.clear()
+    anchor_rows, anchor_cols = snn_model._find_anchors(
+        snn_model_matrix, example_missing_pair
+    )
+
+    error_message = "Anchor rows not as expected"
+    assert np.allclose(anchor_rows, expected_anchor_rows), error_message
+    error_message = "Anchor columns not as expected"
+    assert np.allclose(anchor_cols, expected_anchor_cols), error_message
+
+
+def test_spectral_rank():
+    """Test the _spectral_rank function"""
+
+
+def test_universal_rank():
+    """Test the _universal_rank function"""
+
+
+def test_pcr():
+    """Test the _pcr function"""
+
+
+def test_clip():
+    """Test the _clip function"""
+
+
+def test_train_error():
+    """Test the _train_error function"""
+
+
+def test_get_beta():
+    """Test the _get_beta function"""
+
+
+def test_synth_neighbor():
+    """Test the _synth_neighbor function"""
+
+
+def test_get_tensor():
+    """Test the _get_tensor function"""
+
+
+def test_check_input_matrix():
+    """Test the _check_input_matrix function"""
+
+
+def test_prepare_input_data():
+    """Test the _prepare_input_data function"""
+
+
+def test_check_weights():
+    """Test the _check_weights function"""
