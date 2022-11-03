@@ -37,20 +37,28 @@ def expected_train_error() -> float:
 
 
 @pytest.fixture(scope="session")
-def expected_beta() -> ndarray:
-    # fmt: off
-    beta = np.array([
-        0.03070154, 0.02970248, 0.03350305, 0.03175211, 0.03537408,
-        0.0332766 , 0.02949884, 0.02953682, 0.02896898, 0.03344745,
-        0.02941282, 0.03167826, 0.027838  , 0.02940943, 0.02862311,
-        0.03483487, 0.03234598, 0.03033795, 0.02668949, 0.02964231,
-        0.02896066, 0.02836569, 0.02810523, 0.03018553, 0.03194357,
-        0.03099421, 0.02929728, 0.03077091, 0.03290208, 0.03032667,
-        0.03064988, 0.02552543, 0.02972632, 0.03101782, 0.02984139
-    ])
-    # fmt: on
-    assert beta.shape == (35,)
-    return beta
+def expected_s_rank() -> float:
+    s_rank = 899188.86289752
+    return s_rank
+
+
+@pytest.fixture(scope="session")
+def expected_u_rank():
+    u_rank = np.array(
+        [
+            [-0.39175393],
+            [-0.3800858],
+            [-0.32084485],
+            [-0.20323565],
+            [-0.14651091],
+            [-0.16050234],
+            [-0.24560417],
+            [-0.34898293],
+            [-0.41527478],
+            [-0.39500305],
+        ]
+    )
+    return u_rank
 
 
 @pytest.fixture(scope="session")
@@ -68,6 +76,23 @@ def expected_v_rank() -> ndarray:
     # fmt: on
     assert v_rank.shape == (1, 35)
     return v_rank
+
+
+@pytest.fixture(scope="session")
+def expected_beta() -> ndarray:
+    # fmt: off
+    beta = np.array([
+        0.03070154, 0.02970248, 0.03350305, 0.03175211, 0.03537408,
+        0.0332766 , 0.02949884, 0.02953682, 0.02896898, 0.03344745,
+        0.02941282, 0.03167826, 0.027838  , 0.02940943, 0.02862311,
+        0.03483487, 0.03234598, 0.03033795, 0.02668949, 0.02964231,
+        0.02896066, 0.02836569, 0.02810523, 0.03018553, 0.03194357,
+        0.03099421, 0.02929728, 0.03077091, 0.03290208, 0.03032667,
+        0.03064988, 0.02552543, 0.02972632, 0.03101782, 0.02984139
+    ])
+    # fmt: on
+    assert beta.shape == (35,)
+    return beta
 
 
 @pytest.fixture(scope="session")
@@ -277,12 +302,46 @@ def test_universal_rank():
     """Test the _universal_rank function"""
 
 
-def test_pcr():
+def test_pcr(
+    snn_model: SNN,
+    snn_model_matrix: ndarray,
+    example_missing_pair: ndarray,
+    expected_anchor_rows: ndarray,
+    expected_anchor_cols: ndarray,
+    expected_beta: ndarray,
+    expected_u_rank: ndarray,
+    expected_v_rank: ndarray,
+    expected_s_rank: float,
+):
     """Test the _pcr function"""
+    missing_row, _missing_col = example_missing_pair
+    y1 = snn_model_matrix[missing_row, expected_anchor_cols]
+    X1 = snn_model_matrix[expected_anchor_rows, :]
+    X1 = X1[:, expected_anchor_cols]
+    beta, u_rank, s_rank, v_rank = snn_model._pcr(X1.T, y1)
+    assert np.allclose(beta, expected_beta), "beta not as expected"
+    assert s_rank.shape == (1,), "s_rank shape not as expected"
+    assert s_rank[0].round(8) == expected_s_rank
+    assert np.allclose(u_rank, expected_u_rank), "u_rank not as expected"
+    assert np.allclose(v_rank, expected_v_rank), "v_rank not as expected"
 
 
-def test_train_error():
+def test_train_error(
+    snn_model: SNN,
+    snn_model_matrix: ndarray,
+    example_missing_pair: ndarray,
+    expected_anchor_rows: ndarray,
+    expected_anchor_cols: ndarray,
+    expected_beta: ndarray,
+    expected_train_error: ndarray,
+):
     """Test the _train_error function"""
+    missing_row, _missing_col = example_missing_pair
+    y1 = snn_model_matrix[missing_row, expected_anchor_cols]
+    X1 = snn_model_matrix[expected_anchor_rows, :]
+    X1 = X1[:, expected_anchor_cols]
+    train_error = snn_model._train_error(X1.T, y1, expected_beta)
+    assert train_error.round(8) == expected_train_error, "train_error not as expected"
 
 
 def test_get_beta(
@@ -303,7 +362,7 @@ def test_get_beta(
     beta, v_rank, train_error = snn_model._get_beta(
         snn_model_matrix, missing_row, _anchor_rows, _anchor_cols
     )
-    assert np.allclose(beta, expected_beta), "v_rank not as expected"
+    assert np.allclose(beta, expected_beta), "beta not as expected"
     assert np.allclose(v_rank, expected_v_rank), "v_rank not as expected"
     assert train_error.round(8) == expected_train_error, "train_error not as expected"
 
