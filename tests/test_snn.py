@@ -158,7 +158,7 @@ def snn_model_matrix(snn_model: SNN) -> ndarray:
     # convert time to datetime column
     df[time_column] = pd.to_datetime(df[time_column])
     # get tensor and dimensions
-    tensor, N, I, T = snn_model._get_tensor(
+    tensor, N, T, I = snn_model._get_tensor(
         df, unit_column, time_column, actions, metrics
     )
     matrix = tensor.reshape([N, I * T])
@@ -491,14 +491,14 @@ def get_new_snn_model_pre_fit() -> Tuple:
     # convert time to datetime column
     df[time_column] = pd.to_datetime(df[time_column])
     # get tensor and dimensions
-    tensor, N, I, T = model._get_tensor(df, unit_column, time_column, actions, metrics)
-    return df, model, tensor, N, I, T
+    tensor, N, T, I = model._get_tensor(df, unit_column, time_column, actions, metrics)
+    return df, model, tensor, N, T, I
 
 
 def test_get_tensor(snn_model_matrix: ndarray):
     """Test the _get_tensor function"""
     # Don't use snn_model fixture here
-    _df, _model, tensor, N, I, T = get_new_snn_model_pre_fit()
+    _df, _model, tensor, N, T, I = get_new_snn_model_pre_fit()
     matrix = tensor.reshape([N, I * T])
     error_message = "_get_tensor matrix output not as expected"
     assert np.allclose(matrix, snn_model_matrix, equal_nan=True), error_message
@@ -507,18 +507,20 @@ def test_get_tensor(snn_model_matrix: ndarray):
 def test_fit_transform(snn_model_matrix_full: ndarray, snn_model_matrix: ndarray):
     """Test the _fit_transform function"""
     # Don't use snn_model fixture here
-    df, model, tensor, N, I, T = get_new_snn_model_pre_fit()
+    df, model, tensor, N, T, I = get_new_snn_model_pre_fit()
 
     # tensor to matrix
     matrix = tensor.reshape([N, I * T])
     error_message = "_get_tensor matrix output not as expected"
     assert np.allclose(matrix, snn_model_matrix, equal_nan=True), error_message
-    snn_imputed_matrix = model._fit_transform(matrix)
+    snn_imputed_matrix = model._snn_fit_transform(matrix)
     error_message = "_fit_transform output shape not as expected"
-    assert snn_imputed_matrix.shape == (100, 150), error_message
+    assert snn_imputed_matrix.shape == (100, 50 * 3), error_message
 
     # Check that we get the same ALS output
     snn_imputed_tensor = snn_imputed_matrix.reshape([N, T, I])
+    assert snn_imputed_tensor.shape == (100, 50, 3), error_message
+
     nans_mask = np.isnan(snn_imputed_tensor)
     als_model = ALS()
     # Modifies tensor by filling nans with zeros
@@ -528,7 +530,7 @@ def test_fit_transform(snn_model_matrix_full: ndarray, snn_model_matrix: ndarray
     als_tensor[nans_mask] = np.nan
     matrix_full = als_tensor.reshape([N, I * T])
 
-    error_message = "_fit_transform output not as expected"
+    error_message = "_snn_fit_transform output not as expected"
     assert np.allclose(
         matrix_full, snn_model_matrix_full, equal_nan=True
     ), error_message
@@ -539,23 +541,25 @@ def test_check_input_matrix(snn_model: SNN, snn_model_matrix: ndarray):
     missing_mask = np.argwhere(np.isnan(snn_model_matrix))
 
     # Should not raise any exceptions
-    snn_model._check_input_matrix(snn_model_matrix, missing_mask)
+    snn_model._check_input_matrix(snn_model_matrix, missing_mask, 2)
 
     # Should raise an error due to missing_mask length
     m, n = snn_model_matrix.shape
     with pytest.raises(ValueError):
-        snn_model._check_input_matrix(snn_model_matrix, np.ones(m * n))
+        snn_model._check_input_matrix(snn_model_matrix, np.ones(m * n), 2)
 
     # Should raise an error due to incorrect shape of snn_model_matrix
     new_shape = (100, 50, 3)
     with pytest.raises(ValueError):
-        snn_model._check_input_matrix(snn_model_matrix.reshape(new_shape), missing_mask)
+        snn_model._check_input_matrix(
+            snn_model_matrix.reshape(new_shape), missing_mask, 2
+        )
 
 
 def test_prepare_input_data(snn_model: SNN, snn_model_matrix: ndarray):
     """Test the _prepare_input_data function"""
     missing_mask = np.argwhere(np.isnan(snn_model_matrix))
-    output = snn_model._prepare_input_data(snn_model_matrix, missing_mask)
+    output = snn_model._prepare_input_data(snn_model_matrix, missing_mask, 2)
     error_message = "_prepare_input_data output not as expected"
     assert np.allclose(output, snn_model_matrix, equal_nan=True), error_message
 

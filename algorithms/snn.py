@@ -13,8 +13,6 @@ from cachetools import cached
 from cachetools.keys import hashkey
 from networkx.algorithms.clique import find_cliques  # type: ignore
 from numpy import float64, int64, ndarray
-from sklearn.utils import check_array  # type: ignore
-
 from algorithms.fill_tensor_base import FillTensorBase
 
 
@@ -75,7 +73,7 @@ class SNN(FillTensorBase):
 
         verbose : bool
         """
-        super().__init__()
+        super().__init__(verbose=verbose)
         self.n_neighbors = n_neighbors
         self.weights = weights
         self.random_splits = random_splits
@@ -85,7 +83,6 @@ class SNN(FillTensorBase):
         self.subspace_eps = subspace_eps
         self.min_value = min_value
         self.max_value = max_value
-        self.verbose = verbose
         self.min_singular_value = min_singular_value
 
     def diagnostics(self):
@@ -98,7 +95,7 @@ class SNN(FillTensorBase):
 
     def _initialize(self, X: ndarray, missing_set: ndarray) -> Tuple[ndarray, ndarray]:
         # check and prepare data
-        X = self._prepare_input_data(X, missing_set)
+        X = self._prepare_input_data(X, missing_set, 2)
         # check weights
         self.weights = self._check_weights(self.weights)
         # initialize
@@ -111,7 +108,13 @@ class SNN(FillTensorBase):
         """
         complete missing entries in matrix
         """
-        return self._snn_fit_transform(X, test_set)
+        N, T, I = X.shape
+        X = X.reshape([N, I * T])
+
+        filled_matrix = self._snn_fit_transform(X, test_set)
+        # reshape matrix into tensor
+        tensor = filled_matrix.reshape([N, T, I])
+        return tensor
 
     def _snn_fit_transform(
         self, X: ndarray, test_set: Optional[ndarray] = None
@@ -119,6 +122,8 @@ class SNN(FillTensorBase):
         """
         complete missing entries in matrix
         """
+        # tensor to matrix
+
         missing_set = test_set
         if missing_set is None:
             missing_set = np.argwhere(np.isnan(X))
@@ -133,7 +138,6 @@ class SNN(FillTensorBase):
 
             # predict missing entry
             (pred, feasible) = self._predict(X, missing_pair=missing_pair)
-
             # store in imputed matrices
             (missing_row, missing_col) = missing_pair
             X_imputed[missing_row, missing_col] = pred
@@ -142,32 +146,6 @@ class SNN(FillTensorBase):
         if self.verbose:
             print("[SNN] complete")
         return X_imputed
-
-    def _check_input_matrix(self, X: ndarray, missing_mask: ndarray) -> None:
-        """
-        check to make sure that the input matrix
-        and its mask of missing values are valid.
-        """
-        if len(X.shape) != 2:
-            raise ValueError("expected 2d matrix, got %s array" % (X.shape,))
-        (m, n) = X.shape
-        if not len(missing_mask) > 0:
-            warnings.simplefilter("always")
-            warnings.warn("input matrix is not missing any values")
-        if len(missing_mask) == int(m * n):
-            raise ValueError(
-                "input matrix must have some observed (i.e., non-missing) values"
-            )
-
-    def _prepare_input_data(self, X: ndarray, missing_mask: ndarray) -> ndarray:
-        """
-        prepare input matrix X. return if valid else terminate
-        """
-        X = check_array(X, force_all_finite=False)
-        if (X.dtype != "f") and (X.dtype != "d"):
-            X = X.astype(float)
-        self._check_input_matrix(X, missing_mask)
-        return X
 
     def _check_weights(self, weights: str) -> str:
         """

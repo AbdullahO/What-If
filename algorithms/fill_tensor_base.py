@@ -1,8 +1,9 @@
 import io
 from abc import abstractmethod
 from typing import List, Optional, Tuple
-
+import warnings
 import numpy as np
+from sklearn.utils import check_array  # type: ignore
 import pandas as pd
 import sparse
 import tensorly as tl
@@ -15,13 +16,16 @@ from algorithms.base import WhatIFAlgorithm
 class FillTensorBase(WhatIFAlgorithm):
     """Abstract class for all whatif algorithms that uses the tensor view"""
 
-    def __init__(self) -> None:
+    def __init__(self, verbose: Optional[bool] = False) -> None:
 
+        self.verbose = verbose
         self.actions_dict: Optional[dict] = None
         self.units_dict: Optional[dict] = None
         self.time_dict: Optional[dict] = None
         self.tensor_nans: Optional[sparse.COO] = None
         self.tensor_cp_factors: Optional[List[tl.CPTensor]] = None
+        self.metric: Optional[str] = None
+        self.true_intervention_assignment_matrix: Optional[ndarray] = None
 
     def check_model_for_predict(self):
         error_message_base = " is None, have you called fit()?"
@@ -68,26 +72,20 @@ class FillTensorBase(WhatIFAlgorithm):
         df[time_column] = pd.to_datetime(df[time_column])
 
         # get tensor from df and labels
-        tensor, N, I, T = self._get_tensor(
+        tensor, N, T, I = self._get_tensor(
             df, unit_column, time_column, actions, metrics
         )
 
-        # tensor to matrix
-        matrix = tensor.reshape([N, I * T])
+        # fill tensor
+        tensor_filled = self._fit_transform(tensor)
 
-        # fill matrix
-        snn_imputed_matrix = self._fit_transform(matrix)
-
-        # reshape matrix into tensor
-        tensor = snn_imputed_matrix.reshape([N, T, I])
-
-        self.tensor_nans = sparse.COO.from_numpy(np.isnan(tensor))
+        self.tensor_nans = sparse.COO.from_numpy(np.isnan(tensor_filled))
 
         # Apply Alternating Least Squares to decompose the tensor into CP form
         als_model = ALS()
 
         # Modifies tensor by filling nans with zeros
-        als_model.fit(tensor)
+        als_model.fit(tensor_filled)
 
         # Only save the ALS output tensors
         self.tensor_cp_factors = als_model.cp_factors
@@ -191,7 +189,7 @@ class FillTensorBase(WhatIFAlgorithm):
                 unit_time_received_action_idx
             ]
 
-        return tensor, N, I, T
+        return tensor, N, T, I
 
     def get_tensor_from_factors(
         self,
@@ -323,3 +321,36 @@ class FillTensorBase(WhatIFAlgorithm):
         # We could save them separately instead.
         bytes_io = io.BytesIO(bytes_str)
         self.load(bytes_io)
+
+    def _check_input_matrix(self, X: ndarray, missing_mask: ndarray, ndim: int) -> None:
+        """
+        check to make sure that the input matrix
+        and its mask of missing values are valid.
+        """
+        if len(X.shape) != ndim:
+            raise ValueError(
+                "expected %dd matrix, got %s array"
+                % (
+                    ndim,
+                    X.shape,
+                )
+            )
+        if not len(missing_mask) > 0:
+            warnings.simplefilter("always")
+            warnings.warn("input matrix is not missing any values")
+        if len(missing_mask) == int(np.prod(X.shape)):
+            raise ValueError(
+                "input matrix must have some observed (i.e., non-missing) values"
+            )
+
+    def _prepare_input_data(
+        self, X: ndarray, missing_mask: ndarray, ndim: int
+    ) -> ndarray:
+        """
+        prepare input matrix X. return if valid else terminate
+        """
+        X = check_array(X, force_all_finite=False, allow_nd=True)
+        if (X.dtype != "f") and (X.dtype != "d"):
+            X = X.astype(float)
+        self._check_input_matrix(X, missing_mask, ndim)
+        return X
