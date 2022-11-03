@@ -101,14 +101,19 @@ def expected_beta() -> ndarray:
     return beta
 
 
-@pytest.fixture(scope="session")
-def snn_model() -> SNN:
-    _snn_test_df = pd.read_csv(
+def get_store_sales_simple_df() -> pd.DataFrame:
+    snn_test_df = pd.read_csv(
         os.path.join(current_dir, "data/stores_sales_simple/stores_sales_simple.csv")
     )
+    return snn_test_df
+
+
+@pytest.fixture(scope="session")
+def snn_model() -> SNN:
+    snn_test_df = get_store_sales_simple_df()
     model = SNN(verbose=False)
     model.fit(
-        df=_snn_test_df,
+        df=snn_test_df,
         unit_column="unit_id",
         time_column="time",
         metrics=["sales"],
@@ -283,7 +288,7 @@ def test_get_anchors(
     _obs_cols = np.array(list(obs_cols), dtype=int)
     B = snn_model_matrix_full[_obs_rows]
     B = B[:, _obs_cols]
-    assert not np.any(np.isnan(B)), "snn_model_matrix_full contains NaN"
+    assert not np.any(np.isnan(B)), "snn_model_matrix_full: B contains NaN"
 
     # Test matrix_full, which should short circuit and return the input
     snn_model._get_anchors.cache.clear()
@@ -427,17 +432,64 @@ def test_synth_neighbor(
     assert weight == 1.0, "weight not as expected"
 
 
-def test_get_tensor():
+def get_new_snn_model_pre_fit() -> Tuple:
+    model = SNN(verbose=False)
+    unit_column = "unit_id"
+    time_column = "time"
+    actions = ["ads"]
+    metrics = ["sales"]
+    model.metric = metrics[0]
+    df = get_store_sales_simple_df()
+    # convert time to datetime column
+    df[time_column] = pd.to_datetime(df[time_column])
+    # get tensor and dimensions
+    tensor, N, I, T = model._get_tensor(df, unit_column, time_column, actions, metrics)
+    return df, model, tensor, N, I, T
+
+
+def test_get_tensor(snn_model_matrix: ndarray):
     """Test the _get_tensor function"""
+    # Don't use snn_model fixture here
+    _df, _model, tensor, N, I, T = get_new_snn_model_pre_fit()
+    matrix = tensor.reshape([N, I * T])
+    error_message = "_get_tensor matrix output not as expected"
+    assert np.allclose(matrix, snn_model_matrix, equal_nan=True), error_message
+
+def test_fit_transform(snn_model_matrix_full):
+    """Test the _fit_transform function"""
+    # Don't use snn_model fixture here
+    df, model, tensor, N, I, T = get_new_snn_model_pre_fit()
+    # tensor to matrix
+    matrix = tensor.reshape([N, I * T])
+    output = model._fit_transform(matrix)
+    error_message = "_fit_transform output shape not as expected"
+    assert output.shape == (100, 150), error_message
+    error_message = "_fit_transform output not as expected"
+    assert np.allclose(output, snn_model_matrix_full, equal_nan=True), error_message
 
 
-def test_check_input_matrix():
+def test_check_input_matrix(snn_model: SNN):
     """Test the _check_input_matrix function"""
 
+    snn_model._check_input_matrix(X, missing_mask)
 
-def test_prepare_input_data():
+
+def test_prepare_input_data(snn_model: SNN):
     """Test the _prepare_input_data function"""
+    snn_model._prepare_input_data(X, missing_mask)
 
 
-def test_check_weights():
+def test_initialize(snn_model: SNN):
+    """Test the _initialize function"""
+    snn_model._initialize(X, missing_set)
+
+
+@pytest.mark.parametrize("weights", ["uniform", "distance", "something else", ""])
+def test_check_weights(snn_model: SNN, weights):
     """Test the _check_weights function"""
+    if weights in ("uniform", "distance"):
+        output = snn_model._check_weights(weights)
+        assert output == weights
+    else:
+        with pytest.raises(ValueError):
+            snn_model._check_weights(weights)
