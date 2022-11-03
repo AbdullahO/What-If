@@ -141,6 +141,22 @@ def example_missing_pair(missing_set: ndarray) -> ndarray:
 
 
 @pytest.fixture(scope="session")
+def example_X1_y1(
+    snn_model: SNN,
+    snn_model_matrix: ndarray,
+    expected_anchor_rows: ndarray,
+    expected_anchor_cols: ndarray,
+    example_missing_pair: ndarray,
+) -> Tuple[ndarray, ndarray]:
+    # TODO: rename X1 and y1 here and in snn.py?
+    missing_row, _missing_col = example_missing_pair
+    y1 = snn_model_matrix[missing_row, expected_anchor_cols]
+    X1 = snn_model_matrix[expected_anchor_rows, :]
+    X1 = X1[:, expected_anchor_cols]
+    return X1, y1
+
+
+@pytest.fixture(scope="session")
 def example_obs_rows_and_cols(
     snn_model_matrix: ndarray, example_missing_pair: ndarray
 ) -> Tuple[frozenset, frozenset]:
@@ -294,30 +310,42 @@ def test_find_anchors(
     assert np.allclose(anchor_cols, expected_anchor_cols), error_message
 
 
-def test_spectral_rank():
+@pytest.mark.parametrize("spectral_t", [0.9, 0.7, 0.5])
+def test_spectral_rank(
+    snn_model: SNN, example_X1_y1: Tuple[ndarray, ndarray], spectral_t: float
+):
     """Test the _spectral_rank function"""
+    X1, _y1 = example_X1_y1
+    U, S, V = np.linalg.svd(X1.T, full_matrices=False)
+    snn_model.spectral_t = spectral_t
+    rank = snn_model._spectral_rank(S)
+    assert rank == 1, f"spectral rank at spectral_t = {spectral_t} not as expected"
 
 
-def test_universal_rank():
+def test_universal_rank(
+    snn_model: SNN, snn_model_matrix: ndarray, example_X1_y1: Tuple[ndarray, ndarray]
+):
     """Test the _universal_rank function"""
+
+    X1, _y1 = example_X1_y1
+    U, S, V = np.linalg.svd(X1.T, full_matrices=False)
+    m, n = snn_model_matrix.shape
+    ratio = m / n
+    snn_model.spectral_t = None
+    rank = snn_model._universal_rank(S, ratio=ratio)
+    assert rank == 3, "universal rank not as expected"
 
 
 def test_pcr(
     snn_model: SNN,
-    snn_model_matrix: ndarray,
-    example_missing_pair: ndarray,
-    expected_anchor_rows: ndarray,
-    expected_anchor_cols: ndarray,
+    example_X1_y1: Tuple[ndarray, ndarray],
     expected_beta: ndarray,
     expected_u_rank: ndarray,
     expected_v_rank: ndarray,
     expected_s_rank: float,
 ):
     """Test the _pcr function"""
-    missing_row, _missing_col = example_missing_pair
-    y1 = snn_model_matrix[missing_row, expected_anchor_cols]
-    X1 = snn_model_matrix[expected_anchor_rows, :]
-    X1 = X1[:, expected_anchor_cols]
+    X1, y1 = example_X1_y1
     beta, u_rank, s_rank, v_rank = snn_model._pcr(X1.T, y1)
     assert np.allclose(beta, expected_beta), "beta not as expected"
     assert s_rank.shape == (1,), "s_rank shape not as expected"
@@ -328,18 +356,12 @@ def test_pcr(
 
 def test_train_error(
     snn_model: SNN,
-    snn_model_matrix: ndarray,
-    example_missing_pair: ndarray,
-    expected_anchor_rows: ndarray,
-    expected_anchor_cols: ndarray,
+    example_X1_y1: Tuple[ndarray, ndarray],
     expected_beta: ndarray,
     expected_train_error: ndarray,
 ):
     """Test the _train_error function"""
-    missing_row, _missing_col = example_missing_pair
-    y1 = snn_model_matrix[missing_row, expected_anchor_cols]
-    X1 = snn_model_matrix[expected_anchor_rows, :]
-    X1 = X1[:, expected_anchor_cols]
+    X1, y1 = example_X1_y1
     train_error = snn_model._train_error(X1.T, y1, expected_beta)
     assert train_error.round(8) == expected_train_error, "train_error not as expected"
 
