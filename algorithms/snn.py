@@ -137,6 +137,8 @@ class SNN(WhatIFAlgorithm):
         )
 
         # TODO: only save/load one of these representations
+        # TODO: actually, just save ALS output tensors and later reconstruct
+    
         # tensor to matrix
         self.matrix = tensor.reshape([N, I * T])
 
