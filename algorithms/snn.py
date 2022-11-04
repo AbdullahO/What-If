@@ -138,7 +138,7 @@ class SNN(WhatIFAlgorithm):
 
         # TODO: only save/load one of these representations
         # TODO: actually, just save ALS output tensors and later reconstruct
-    
+
         # tensor to matrix
         self.matrix = tensor.reshape([N, I * T])
 
@@ -450,6 +450,9 @@ class SNN(WhatIFAlgorithm):
         principal component regression (PCR)
         """
         (u, s, v) = np.linalg.svd(X, full_matrices=False)
+        # filter out small singular values
+        s[s < self.min_singular_value] = 0
+
         if self.max_rank is not None:
             rank = self.max_rank
         elif self.spectral_t is not None:
@@ -457,15 +460,10 @@ class SNN(WhatIFAlgorithm):
         else:
             (m, n) = X.shape
             rank = self._universal_rank(s, ratio=m / n)
+
         s_rank = s[:rank]
         u_rank = u[:, :rank]
         v_rank = v[:rank, :]
-
-        # filter out small singular values
-        k = int(np.argmin(s_rank < self.min_singular_value)) + 1
-        s_rank = s[:k]
-        u_rank = u[:, :k]
-        v_rank = v[:k, :]
 
         beta = ((v_rank.T / s_rank) @ u_rank.T) @ y
         return (beta, u_rank, s_rank, v_rank)
