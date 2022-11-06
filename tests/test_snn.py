@@ -302,7 +302,7 @@ def test_get_anchors(
     expected_anchor_cols: ndarray,
 ):
     """Test the _get_anchors function"""
-    snn_model._get_anchors.cache.clear()
+    snn_model._get_anchors.cache.clear()  # type: ignore
     obs_rows, obs_cols = example_obs_rows_and_cols
     anchor_rows, anchor_cols = snn_model._get_anchors(
         snn_model_matrix, obs_rows, obs_cols
@@ -320,7 +320,7 @@ def test_get_anchors(
     assert not np.any(np.isnan(B)), "snn_model_matrix_full: B contains NaN"
 
     # Test matrix_full, which should short circuit and return the input
-    snn_model._get_anchors.cache.clear()
+    snn_model._get_anchors.cache.clear()  # type: ignore
     anchor_rows, anchor_cols = snn_model._get_anchors(
         snn_model_matrix_full, obs_rows, obs_cols
     )
@@ -339,7 +339,7 @@ def test_find_anchors(
     expected_anchor_cols: ndarray,
 ):
     """Test the _find_anchors function"""
-    snn_model._get_anchors.cache.clear()
+    snn_model._get_anchors.cache.clear()  # type: ignore
     anchor_rows, anchor_cols = snn_model._find_anchors(
         snn_model_matrix, example_missing_pair
     )
@@ -418,7 +418,7 @@ def test_get_beta(
     expected_train_error: float,
 ):
     """Test the _get_beta function"""
-    snn_model._get_beta.cache.clear()
+    snn_model._get_beta.cache.clear()  # type: ignore
     missing_row, _missing_col = example_missing_pair
     _anchor_rows = frozenset(expected_anchor_rows)
     _anchor_cols = frozenset(expected_anchor_cols)
@@ -434,9 +434,9 @@ def test_clip(snn_model: SNN):
     """Test the _clip function"""
     snn_model.min_value = 1
     snn_model.max_value = 5
-    assert snn_model._clip(11) == 5, "should clip to max_value"
-    assert snn_model._clip(0) == 1, "should clip to min_value"
-    assert snn_model._clip(-10) == 1, "should clip to min_value"
+    assert snn_model._clip(np.float64(11.0)) == 5, "should clip to max_value"
+    assert snn_model._clip(np.float64(0.1)) == 1, "should clip to min_value"
+    assert snn_model._clip(np.float64(-10.5)) == 1, "should clip to min_value"
     # Put back for other tests. TODO: use a context manager?
     snn_model.min_value = None
     snn_model.max_value = None
