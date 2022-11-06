@@ -17,6 +17,8 @@ from sklearn.utils import check_array  # type: ignore
 from algorithms.base import FillTensorBase, WhatIFAlgorithm
 from numpy import float64, int64, ndarray
 
+from algorithms.als import AlternatingLeastSquares as ALS
+
 
 class SNN(WhatIFAlgorithm):
     """
@@ -147,6 +149,11 @@ class SNN(WhatIFAlgorithm):
 
         # reshape matrix
         self.tensor = self.matrix_full.reshape([N, T, I])
+
+        als_model = ALS()
+        als_model.fit(self.tensor)
+        print(als_model.pandas_cp_factors)
+
 
     def query(
         self,
