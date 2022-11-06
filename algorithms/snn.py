@@ -9,6 +9,8 @@ from typing import Any, Iterator, List, Tuple, Union, Optional
 import networkx as nx
 import numpy as np
 import pandas as pd
+import dask
+from dask import dataframe as dd
 from cachetools import cached
 from cachetools.keys import hashkey
 from networkx.algorithms.clique import find_cliques  # type: ignore
@@ -108,7 +110,7 @@ class SNN(WhatIFAlgorithm):
 
     def fit(
         self,
-        df: pd.DataFrame,
+        df: Union[pd.DataFrame, dd.DataFrame],
         unit_column: str,
         time_column: str,
         metrics: list,
@@ -129,6 +131,29 @@ class SNN(WhatIFAlgorithm):
         # get tensor from df and labels
         assert len(metrics) == 1, "method can only support single metric for now"
         self.metric = metrics[0]
+
+        if isinstance(df, pd.DataFrame):
+            # TODO: move everything besides df to a new class? or save to self?
+            self._fit_pandas(df, unit_column, time_column, metrics, actions, covariates)
+        elif isinstance(df, dd.DataFrame):
+            self._fit_dask(df)
+        else:
+            df_type = type(df)
+            error_message = (
+                f"Input df is of type: {df_type}, but "
+                "it should be either a Pandas or Dask DataFrame"
+            )
+            raise NotImplementedError(error_message)
+
+    def _fit_pandas(
+        self,
+        df: pd.DataFrame,
+        unit_column: str,
+        time_column: str,
+        metrics: list,
+        actions: list,
+        covariates: Optional[list] = None,
+    ):
         # convert time to datetime column
         df[time_column] = pd.to_datetime(df[time_column])
         # get tensor dimensions
