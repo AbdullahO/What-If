@@ -81,3 +81,11 @@ class AlternatingLeastSquares:
             np.ones(self.k_factors), weights
         ), "weights should be all ones unless parafac(normalize_factors=True)"
         self.pandas_cp_factors = factors
+
+    def predict(self) -> None:
+        factors = self.pandas_cp_factors
+        if factors is None:
+            error_message = "self.pandas_cp_factors is None: have you called fit()?"
+            raise ValueError(error_message)
+        full_tensor = tl.cp_to_tensor(factors)
+        return full_tensor
