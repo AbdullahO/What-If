@@ -151,7 +151,8 @@ class SNN(WhatIFAlgorithm):
         self.tensor = self.matrix_full.reshape([N, T, I])
 
         als_model = ALS()
-        als_model.fit(self.tensor)
+        # TODO: stop using copy? this will modify input tensor by filling nans with zeros
+        als_model.fit(self.tensor.copy())
         print(als_model.pandas_cp_factors)
 
 
