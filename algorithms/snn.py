@@ -138,23 +138,24 @@ class SNN(WhatIFAlgorithm):
             df, unit_column, time_column, actions, metrics
         )
 
-        # TODO: only save/load one of these representations
-        # TODO: actually, just save ALS output tensors and later reconstruct
-
         # tensor to matrix
-        self.matrix = tensor.reshape([N, I * T])
+        matrix = tensor.reshape([N, I * T])
 
         # fill matrix
-        self.matrix_full = self._fit_transform(self.matrix)
+        matrix_full = self._fit_transform(matrix)
 
         # reshape matrix
-        self.tensor = self.matrix_full.reshape([N, T, I])
+        tensor = matrix_full.reshape([N, T, I])
 
         als_model = ALS()
-        # TODO: stop using copy? this will modify input tensor by filling nans with zeros
-        als_model.fit(self.tensor.copy())
-        print(als_model.pandas_cp_factors)
+        # Modifies tensor by filling nans with zeros
+        als_model.fit(tensor)
+        # Only save the ALS output tensors
+        self.tensor_cp_factors = als_model.cp_factors
 
+    def get_tensor_from_factors(self):
+        tensor = ALS._predict(self.tensor_cp_factors)
+        return tensor
 
     def query(
         self,
@@ -180,8 +181,8 @@ class SNN(WhatIFAlgorithm):
         # TODO: validate this
         true_intervention_assignment_matrix = self.true_intervention_assignment_matrix
 
-        # TODO: validate this
-        tensor = self.tensor
+        # TODO: only load the necessary range for each factor matrix?
+        tensor = self.get_tensor_from_factors()
 
         # TODO: NEED TO LOAD everything above this for prediction
 

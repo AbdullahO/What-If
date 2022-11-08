@@ -41,7 +41,7 @@ class AlternatingLeastSquares:
         self.max_iterations = max_iterations
         self.k_factors = k_factors
         self.cp_tensor: Optional[tl.CPTensor] = None
-        self.pandas_cp_factors: Optional[List[ndarray]] = None
+        self.cp_factors: Optional[List[ndarray]] = None
 
     def __repr__(self):
         """
@@ -74,18 +74,33 @@ class AlternatingLeastSquares:
         tensor[np.isnan(tensor)] = 0
         # apply PARAFAC (ALS)
         self.cp_tensor = tl.decomposition.parafac(
-            tensor, self.k_factors, n_iter_max=self.max_iterations, mask=tensor_mask, init="random"
+            tensor,
+            self.k_factors,
+            n_iter_max=self.max_iterations,
+            mask=tensor_mask,
+            init="random",
         )
         weights, factors = self.cp_tensor
         assert np.allclose(
             np.ones(self.k_factors), weights
         ), "weights should be all ones unless parafac(normalize_factors=True)"
-        self.pandas_cp_factors = factors
+        self.cp_factors = factors
 
-    def predict(self) -> None:
-        factors = self.pandas_cp_factors
+    @staticmethod
+    def _predict(factors=None) -> ndarray:
         if factors is None:
-            error_message = "self.pandas_cp_factors is None: have you called fit()?"
+            error_message = "factors not passed to _predict, did you mean to use the instance method: predict?"
             raise ValueError(error_message)
-        full_tensor = tl.cp_to_tensor(factors)
+        # should we use self.k_factors here?
+        rank = factors[0].shape[1]
+        cp_tensor = (np.ones(rank), factors)
+        full_tensor = tl.cp_to_tensor(cp_tensor)
+        return full_tensor
+
+    def predict(self) -> ndarray:
+        factors = self.cp_factors
+        if factors is None:
+            error_message = "self.cp_factors is None: have you called fit()?"
+            raise ValueError(error_message)
+        full_tensor = AlternatingLeastSquares._predict(factors)
         return full_tensor
