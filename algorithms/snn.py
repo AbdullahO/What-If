@@ -90,7 +90,6 @@ class SNN(WhatIFAlgorithm):
         self.actions_dict: Optional[dict] = None
         self.units_dict: Optional[dict] = None
         self.time_dict: Optional[dict] = None
-        self.matrix: Optional[ndarray] = None
         self.min_singular_value = min_singular_value
 
     def __repr__(self):
@@ -313,6 +312,11 @@ class SNN(WhatIFAlgorithm):
         )
         self.units_dict = dict(zip(metric_matrix_df.index, np.arange(N)))
         self.time_dict = dict(zip(metric_matrix_df.columns, np.arange(T)))
+
+        # save counts of unique units, timesteps, interventions
+        self.N = N
+        self.T = T
+        self.I = I
 
         df["intervention_assignment"] = (
             df[actions].agg("-".join, axis=1).map(self.actions_dict).values

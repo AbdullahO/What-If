@@ -149,16 +149,29 @@ def snn_model() -> SNN:
 
 @pytest.fixture(scope="session")
 def snn_model_matrix(snn_model: SNN) -> ndarray:
-    X = snn_model.matrix
-    assert X is not None
-    return X
+    unit_column = "unit_id"
+    time_column = "time"
+    actions = ["ads"]
+    metrics = ["sales"]
+    df = get_store_sales_simple_df()
+    # convert time to datetime column
+    df[time_column] = pd.to_datetime(df[time_column])
+    # get tensor and dimensions
+    tensor, N, I, T = snn_model._get_tensor(
+        df, unit_column, time_column, actions, metrics
+    )
+    matrix = tensor.reshape([N, I * T])
+    return matrix
 
 
 @pytest.fixture(scope="session")
 def snn_model_matrix_full(snn_model: SNN) -> ndarray:
-    X_full = snn_model.matrix_full
-    assert X_full is not None
-    return X_full
+    N = snn_model.N
+    T = snn_model.T
+    I = snn_model.I
+    tensor = snn_model.get_tensor_from_factors()
+    matrix_full = tensor.reshape([N, I * T])
+    return matrix_full
 
 
 @pytest.fixture(scope="session")
@@ -224,7 +237,7 @@ def test_split(snn_model: SNN, expected_anchor_rows: ndarray, k: int):
 
 def test_model_str(snn_model: SNN):
     assert str(snn_model) == (
-        "SNN(linear_span_eps=0.1, max_rank=None, max_value=None,"
+        "SNN(I=3, N=100, T=50, linear_span_eps=0.1, max_rank=None, max_value=None,"
         " metric='sales', min_singular_value=1e-07, min_value=None,"
         " n_neighbors=1, random_splits=False, spectral_t=None, subspace_eps=0.1,"
         " verbose=False, weights='uniform')"
