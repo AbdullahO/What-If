@@ -7,8 +7,10 @@ http://tensorly.org/stable/modules/generated/tensorly.decomposition.parafac.html
 
 1. Regular ALS for pandas
 2. Distributed ALS for dask
-3. Iterative ALS for partial_fit / dask Iterative: using Stochastic Gradient Descent (SGD)
-
+<s>3. Iterative ALS for partial_fit / dask Iterative: using Stochastic Gradient Descent (SGD)</s>
+Abdullah's idea for Iterative ALS: only update T factor
+    - keep window of T available for predictions
+    - need to allow user to change the window and/or automatically determine
 """
 
 
@@ -79,7 +81,6 @@ class AlternatingLeastSquares:
             self.k_factors,
             n_iter_max=self.max_iterations,
             mask=tensor_mask,
-            init="random",
             random_state=self.random_state,
         )
         weights, factors = self.cp_tensor

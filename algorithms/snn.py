@@ -4,20 +4,21 @@ Refactoring the code in https://github.com/deshen24/syntheticNN
 """
 import sys
 import warnings
-from typing import Any, Iterator, List, Tuple, Union, Optional
+from typing import Any, Iterator, List, Optional, Tuple, Union
 
 import networkx as nx
 import numpy as np
 import pandas as pd
+import sparse
+import tensorly as tl
 from cachetools import cached
 from cachetools.keys import hashkey
 from networkx.algorithms.clique import find_cliques  # type: ignore
+from numpy import float64, int64, ndarray
 from sklearn.utils import check_array  # type: ignore
 
-from algorithms.base import FillTensorBase, WhatIFAlgorithm
-from numpy import float64, int64, ndarray
-
 from algorithms.als import AlternatingLeastSquares as ALS
+from algorithms.base import FillTensorBase, WhatIFAlgorithm
 
 
 class SNN(WhatIFAlgorithm):
@@ -91,6 +92,8 @@ class SNN(WhatIFAlgorithm):
         self.units_dict: Optional[dict] = None
         self.time_dict: Optional[dict] = None
         self.min_singular_value = min_singular_value
+        self.tensor_nans: Optional[ndarray] = None
+        self.tensor_cp_factors: Optional[List[tl.CPTensor]] = None
 
     def __repr__(self):
         """
@@ -147,7 +150,8 @@ class SNN(WhatIFAlgorithm):
         # reshape matrix into tensor
         tensor = snn_imputed_matrix.reshape([N, T, I])
 
-        self.tensor = np.array(tensor)
+        self.tensor_nans = sparse.COO.from_numpy(np.isnan(tensor))
+
         # Apply Alternating Least Squares to decompose the tensor into CP form
         als_model = ALS()
 
@@ -159,7 +163,8 @@ class SNN(WhatIFAlgorithm):
 
     def get_tensor_from_factors(self):
         tensor = ALS._predict(self.tensor_cp_factors)
-        tensor[np.isnan(self.tensor)] = np.nan
+        mask = self.tensor_nans.todense()
+        tensor[mask] = np.nan
         return tensor
 
     def query(

@@ -500,23 +500,30 @@ def test_get_tensor(snn_model_matrix: ndarray):
     assert np.allclose(matrix, snn_model_matrix, equal_nan=True), error_message
 
 
-def test_fit_transform(snn_model_matrix_full):
+def test_fit_transform(snn_model_matrix_full: ndarray, snn_model_matrix: ndarray):
     """Test the _fit_transform function"""
     # Don't use snn_model fixture here
     df, model, tensor, N, I, T = get_new_snn_model_pre_fit()
+
     # tensor to matrix
     matrix = tensor.reshape([N, I * T])
+    error_message = "_get_tensor matrix output not as expected"
+    assert np.allclose(matrix, snn_model_matrix, equal_nan=True), error_message
     snn_imputed_matrix = model._fit_transform(matrix)
     error_message = "_fit_transform output shape not as expected"
     assert snn_imputed_matrix.shape == (100, 150), error_message
+
     # Check that we get the same ALS output
     tensor = snn_imputed_matrix.reshape([N, T, I])
+    nans_mask = np.isnan(tensor)
     als_model = ALS()
     # Modifies tensor by filling nans with zeros
     als_model.fit(tensor)
     # Reconstructs tensor from CP form, all values now filled
     tensor = als_model.predict()
+    tensor[nans_mask] = np.nan
     matrix_full = tensor.reshape([N, I * T])
+
     error_message = "_fit_transform output not as expected"
     assert np.allclose(
         matrix_full, snn_model_matrix_full, equal_nan=True
