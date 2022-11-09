@@ -71,7 +71,8 @@ def evaluate(data_gen, algorithm, repeat):
 
         # adjust tensor
         indices = [model.actions_dict[action] for action in ["ad 0", "ad 1", "ad 2"]]
-        tensor_est = model.tensor[:, :, indices]
+        _tensor_est = model.get_tensor_from_factors()
+        tensor_est = _tensor_est[:, :, indices]
 
         # accuracy ()
         notnan = ~np.isnan(tensor_est)
