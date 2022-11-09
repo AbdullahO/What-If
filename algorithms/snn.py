@@ -147,6 +147,7 @@ class SNN(WhatIFAlgorithm):
         # reshape matrix into tensor
         tensor = snn_imputed_matrix.reshape([N, T, I])
 
+        self.tensor = np.array(tensor)
         # Apply Alternating Least Squares to decompose the tensor into CP form
         als_model = ALS()
 
@@ -158,6 +159,7 @@ class SNN(WhatIFAlgorithm):
 
     def get_tensor_from_factors(self):
         tensor = ALS._predict(self.tensor_cp_factors)
+        tensor[np.isnan(self.tensor)] = np.nan
         return tensor
 
     def query(
