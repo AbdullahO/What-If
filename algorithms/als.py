@@ -42,6 +42,7 @@ class AlternatingLeastSquares:
         self.k_factors = k_factors
         self.cp_tensor: Optional[tl.CPTensor] = None
         self.cp_factors: Optional[List[ndarray]] = None
+        self.random_state = np.random.RandomState(0)
 
     def __repr__(self):
         """
@@ -79,6 +80,7 @@ class AlternatingLeastSquares:
             n_iter_max=self.max_iterations,
             mask=tensor_mask,
             init="random",
+            random_state=self.random_state,
         )
         weights, factors = self.cp_tensor
         assert np.allclose(

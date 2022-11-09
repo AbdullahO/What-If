@@ -127,12 +127,13 @@ class SNN(WhatIFAlgorithm):
             covariates (list, optional): list of names for the covariate columns. Defaults to None.
 
         """
-        # get tensor from df and labels
         assert len(metrics) == 1, "method can only support single metric for now"
         self.metric = metrics[0]
+
         # convert time to datetime column
         df[time_column] = pd.to_datetime(df[time_column])
-        # get tensor dimensions
+
+        # get tensor from df and labels
         tensor, N, I, T = self._get_tensor(
             df, unit_column, time_column, actions, metrics
         )
@@ -141,14 +142,17 @@ class SNN(WhatIFAlgorithm):
         matrix = tensor.reshape([N, I * T])
 
         # fill matrix
-        matrix_full = self._fit_transform(matrix)
+        snn_imputed_matrix = self._fit_transform(matrix)
 
-        # reshape matrix
-        tensor = matrix_full.reshape([N, T, I])
+        # reshape matrix into tensor
+        tensor = snn_imputed_matrix.reshape([N, T, I])
 
+        # Apply Alternating Least Squares to decompose the tensor into CP form
         als_model = ALS()
+
         # Modifies tensor by filling nans with zeros
         als_model.fit(tensor)
+
         # Only save the ALS output tensors
         self.tensor_cp_factors = als_model.cp_factors
 

@@ -8,6 +8,7 @@ import pytest
 from numpy import ndarray
 
 from algorithms.snn import SNN
+from algorithms.als import AlternatingLeastSquares as ALS
 
 current_dir = os.getcwd()
 
@@ -505,11 +506,21 @@ def test_fit_transform(snn_model_matrix_full):
     df, model, tensor, N, I, T = get_new_snn_model_pre_fit()
     # tensor to matrix
     matrix = tensor.reshape([N, I * T])
-    output = model._fit_transform(matrix)
+    snn_imputed_matrix = model._fit_transform(matrix)
     error_message = "_fit_transform output shape not as expected"
-    assert output.shape == (100, 150), error_message
+    assert snn_imputed_matrix.shape == (100, 150), error_message
+    # Check that we get the same ALS output
+    tensor = snn_imputed_matrix.reshape([N, T, I])
+    als_model = ALS()
+    # Modifies tensor by filling nans with zeros
+    als_model.fit(tensor)
+    # Reconstructs tensor from CP form, all values now filled
+    tensor = als_model.predict()
+    matrix_full = tensor.reshape([N, I * T])
     error_message = "_fit_transform output not as expected"
-    assert np.allclose(output, snn_model_matrix_full, equal_nan=True), error_message
+    assert np.allclose(
+        matrix_full, snn_model_matrix_full, equal_nan=True
+    ), error_message
 
 
 def test_check_input_matrix(snn_model: SNN, snn_model_matrix: ndarray):
