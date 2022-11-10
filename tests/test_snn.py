@@ -514,15 +514,15 @@ def test_fit_transform(snn_model_matrix_full: ndarray, snn_model_matrix: ndarray
     assert snn_imputed_matrix.shape == (100, 150), error_message
 
     # Check that we get the same ALS output
-    tensor = snn_imputed_matrix.reshape([N, T, I])
-    nans_mask = np.isnan(tensor)
+    snn_imputed_tensor = snn_imputed_matrix.reshape([N, T, I])
+    nans_mask = np.isnan(snn_imputed_tensor)
     als_model = ALS()
     # Modifies tensor by filling nans with zeros
-    als_model.fit(tensor)
+    als_model.fit(snn_imputed_tensor)
     # Reconstructs tensor from CP form, all values now filled
-    tensor = als_model.predict()
-    tensor[nans_mask] = np.nan
-    matrix_full = tensor.reshape([N, I * T])
+    als_tensor = als_model.predict()
+    als_tensor[nans_mask] = np.nan
+    matrix_full = als_tensor.reshape([N, I * T])
 
     error_message = "_fit_transform output not as expected"
     assert np.allclose(
