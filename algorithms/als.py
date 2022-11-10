@@ -14,19 +14,17 @@ Abdullah's idea for Iterative ALS: only update T factor
 """
 
 
-# from algorithms.base import FillTensorBase
-
-from typing import Optional, List
+from typing import List, Optional
 
 import numpy as np
 import tensorly as tl
 import tensorly.decomposition
 from numpy import float64, int64, ndarray
 
+# from algorithms.base import StrReprBase
 
-# TODO: inherit from FillTensorBase?
-# FillTensorBase has query, but we want to save the output separately
-# Could still implement query with appropriate inputs
+
+# class AlternatingLeastSquares(StrReprBase):
 class AlternatingLeastSquares:
     """
     Impute missing entries in a matrix using the ALS algorithm
@@ -51,7 +49,7 @@ class AlternatingLeastSquares:
         """
         return str(self)
 
-    # TODO: move this to a new base class for both FillTensorBase and WhatIFAlgorithm ?
+    # TODO: move this to a new base class - StrReprBase
     def __str__(self):
         field_list = []
         for (k, v) in sorted(self.__dict__.items()):
@@ -89,12 +87,21 @@ class AlternatingLeastSquares:
         self.cp_factors = factors
 
     @staticmethod
-    def _predict(factors=None) -> ndarray:
-        if factors is None:
+    def _predict(
+        factors: Optional[List[ndarray]] = None,
+        unit_idx: Optional[List[int]] = None,
+        time_idx: Optional[List[int]] = None,
+    ) -> ndarray:
+        if not factors:
             error_message = "factors not passed to _predict, did you mean to use the instance method: predict?"
             raise ValueError(error_message)
-        # should we use self.k_factors here?
+        factors = factors.copy()
         rank = factors[0].shape[1]
+        # Assumes factors are in order N, T, I (unit, time, intervention)
+        if unit_idx is not None:
+            factors[0] = factors[0][unit_idx]
+        if time_idx is not None:
+            factors[1] = factors[1][time_idx]
         cp_tensor = (np.ones(rank), factors)
         full_tensor = tl.cp_to_tensor(cp_tensor)
         return full_tensor

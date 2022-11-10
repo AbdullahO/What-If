@@ -92,7 +92,7 @@ class SNN(WhatIFAlgorithm):
         self.units_dict: Optional[dict] = None
         self.time_dict: Optional[dict] = None
         self.min_singular_value = min_singular_value
-        self.tensor_nans: Optional[ndarray] = None
+        self.tensor_nans: Optional[sparse.COO] = None
         self.tensor_cp_factors: Optional[List[tl.CPTensor]] = None
 
     def __repr__(self):
@@ -161,10 +161,23 @@ class SNN(WhatIFAlgorithm):
         # Only save the ALS output tensors
         self.tensor_cp_factors = als_model.cp_factors
 
-    def get_tensor_from_factors(self):
-        tensor = ALS._predict(self.tensor_cp_factors)
-        mask = self.tensor_nans.todense()
-        tensor[mask] = np.nan
+    def get_tensor_from_factors(
+        self,
+        unit_idx: Optional[List[int]] = None,
+        time_idx: Optional[List[int]] = None,
+    ):
+        tensor = ALS._predict(
+            self.tensor_cp_factors, unit_idx=unit_idx, time_idx=time_idx
+        )
+        if self.tensor_nans is not None:
+            # Assumes factors are in order N, T, I (unit, time, intervention)
+            tensor_nans = self.tensor_nans
+            if unit_idx is not None:
+                tensor_nans = tensor_nans[unit_idx]
+            if time_idx is not None:
+                tensor_nans = tensor_nans[:, time_idx]
+            mask = tensor_nans.todense()
+            tensor[mask] = np.nan
         return tensor
 
     def query(
@@ -191,10 +204,8 @@ class SNN(WhatIFAlgorithm):
         # TODO: validate this
         true_intervention_assignment_matrix = self.true_intervention_assignment_matrix
 
-        # TODO: only load the necessary range for each factor matrix?
-        tensor = self.get_tensor_from_factors()
 
-        # TODO: NEED TO LOAD everything above this for prediction
+        # TODO: NEED TO LOAD everything above this for prediction, along with self.get_tensor_from_factors
 
         # Get the units time, action, and action_time_range indices
         unit_idx = [units_dict[u] for u in units]
@@ -204,6 +215,8 @@ class SNN(WhatIFAlgorithm):
         timesteps = [t for t in time_dict.keys() if t <= _time[1] and t >= _time[0]]
         # get idx
         time_idx = [time_dict[t] for t in timesteps]
+
+        tensor = self.get_tensor_from_factors(unit_idx=unit_idx, time_idx=time_idx)
 
         # convert to timestamp
         _action_time_range = [pd.Timestamp(t) for t in action_time_range]
@@ -224,13 +237,9 @@ class SNN(WhatIFAlgorithm):
         # get it for only the time frame of interest
         assignment = assignment[:, time_idx]
 
-        # Get the right tensor slices |request units| x |request time range| x |actions|
-        tensor_unit_time = tensor[unit_idx, :][:, time_idx, :]
         # Select the right matrix based on the actions selected
         assignment = assignment.reshape([assignment.shape[0], assignment.shape[1], 1])
-        selected_matrix = np.take_along_axis(tensor_unit_time, assignment, axis=2)[
-            :, :, 0
-        ]
+        selected_matrix = np.take_along_axis(tensor, assignment, axis=2)[:, :, 0]
 
         # return unit X time DF
         out_df = pd.DataFrame(data=selected_matrix, index=units, columns=timesteps)
