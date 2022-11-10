@@ -44,7 +44,6 @@ class AlternatingLeastSquares:
         self.k_factors = k_factors
         self.cp_tensor: Optional[tl.CPTensor] = None
         self.cp_factors: Optional[List[ndarray]] = None
-        self.random_state = np.random.RandomState(0)
 
     def __repr__(self):
         """
@@ -76,12 +75,12 @@ class AlternatingLeastSquares:
         # fill zeros for nan
         tensor[np.isnan(tensor)] = 0
         # apply PARAFAC (ALS)
+        np.random.seed(0)
         self.cp_tensor = tl.decomposition.parafac(
             tensor,
             self.k_factors,
             n_iter_max=self.max_iterations,
             mask=tensor_mask,
-            random_state=self.random_state,
         )
         weights, factors = self.cp_tensor
         assert np.allclose(
