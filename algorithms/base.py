@@ -5,8 +5,20 @@ import numpy as np
 import numpy.typing as np_typing
 import pandas as pd
 
+class StrReprBase:
+    def __repr__(self):
+        return str(self)
 
-class WhatIFAlgorithm(ABC):
+    def __str__(self):
+        field_list = []
+        for (k, v) in sorted(self.__dict__.items()):
+            if (v is None) or (isinstance(v, (float, int))):
+                field_list.append("%s=%s" % (k, v))
+            elif isinstance(v, str):
+                field_list.append("%s='%s'" % (k, v))
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(field_list))
+
+class WhatIFAlgorithm(ABC, StrReprBase):
     """Abstract class for what if algorithms"""
 
     # properties

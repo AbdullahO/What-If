@@ -95,21 +95,6 @@ class SNN(WhatIFAlgorithm):
         self.tensor_nans: Optional[sparse.COO] = None
         self.tensor_cp_factors: Optional[List[tl.CPTensor]] = None
 
-    def __repr__(self):
-        """
-        print parameters of SNN class
-        """
-        return str(self)
-
-    def __str__(self):
-        field_list = []
-        for (k, v) in sorted(self.__dict__.items()):
-            if (v is None) or (isinstance(v, (float, int))):
-                field_list.append("%s=%s" % (k, v))
-            elif isinstance(v, str):
-                field_list.append("%s='%s'" % (k, v))
-        return "%s(%s)" % (self.__class__.__name__, ", ".join(field_list))
-
     def fit(
         self,
         df: pd.DataFrame,
@@ -203,7 +188,6 @@ class SNN(WhatIFAlgorithm):
 
         # TODO: validate this
         true_intervention_assignment_matrix = self.true_intervention_assignment_matrix
-
 
         # TODO: NEED TO LOAD everything above this for prediction, along with self.get_tensor_from_factors
 
@@ -324,8 +308,6 @@ class SNN(WhatIFAlgorithm):
         I = len(list_of_actions)
         self.actions_dict = dict(zip(list_of_actions, np.arange(I)))
 
-        # init tensors
-        tensor = np.full([N, T, I], np.nan)
         # get tensor values
         metric_matrix_df = df.pivot(
             index=unit_column, columns=time_column, values=metrics[0]
@@ -338,18 +320,29 @@ class SNN(WhatIFAlgorithm):
         self.T = T
         self.I = I
 
+        # add the action_idx to each row
         df["intervention_assignment"] = (
             df[actions].agg("-".join, axis=1).map(self.actions_dict).values
         )
+
+        # create assignment matrix
         self.true_intervention_assignment_matrix = df.pivot(
             index=unit_column, columns=time_column, values="intervention_assignment"
         ).values
 
+        # init tensor
+        tensor = np.full([N, T, I], np.nan)
+
+        # fill tensor with metric_matrix values in appropriate locations
         metric_matrix = metric_matrix_df.values
         for action_idx in range(I):
-            tensor[
-                self.true_intervention_assignment_matrix == action_idx, action_idx
-            ] = metric_matrix[self.true_intervention_assignment_matrix == action_idx]
+            unit_time_received_action_idx = (
+                self.true_intervention_assignment_matrix == action_idx
+            )
+            tensor[unit_time_received_action_idx, action_idx] = metric_matrix[
+                unit_time_received_action_idx
+            ]
+
         return tensor, N, I, T
 
     def _check_input_matrix(self, X: ndarray, missing_mask: ndarray) -> None:

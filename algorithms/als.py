@@ -21,11 +21,10 @@ import tensorly as tl
 import tensorly.decomposition
 from numpy import float64, int64, ndarray
 
-# from algorithms.base import StrReprBase
+from algorithms.base import StrReprBase
 
 
-# class AlternatingLeastSquares(StrReprBase):
-class AlternatingLeastSquares:
+class AlternatingLeastSquares(StrReprBase):
     """
     Impute missing entries in a matrix using the ALS algorithm
     """
@@ -42,22 +41,6 @@ class AlternatingLeastSquares:
         self.k_factors = k_factors
         self.cp_tensor: Optional[tl.CPTensor] = None
         self.cp_factors: Optional[List[ndarray]] = None
-
-    def __repr__(self):
-        """
-        print parameters of SNN class
-        """
-        return str(self)
-
-    # TODO: move this to a new base class - StrReprBase
-    def __str__(self):
-        field_list = []
-        for (k, v) in sorted(self.__dict__.items()):
-            if (v is None) or (isinstance(v, (float, int))):
-                field_list.append("%s=%s" % (k, v))
-            elif isinstance(v, str):
-                field_list.append("%s='%s'" % (k, v))
-        return "%s(%s)" % (self.__class__.__name__, ", ".join(field_list))
 
     def fit(self, tensor: ndarray) -> None:
         """
@@ -106,10 +89,14 @@ class AlternatingLeastSquares:
         full_tensor = tl.cp_to_tensor(cp_tensor)
         return full_tensor
 
-    def predict(self) -> ndarray:
+    def predict(
+        self,
+        unit_idx: Optional[List[int]] = None,
+        time_idx: Optional[List[int]] = None,
+    ) -> ndarray:
         factors = self.cp_factors
         if factors is None:
             error_message = "self.cp_factors is None: have you called fit()?"
             raise ValueError(error_message)
-        full_tensor = AlternatingLeastSquares._predict(factors)
+        full_tensor = AlternatingLeastSquares._predict(factors, unit_idx, time_idx)
         return full_tensor
