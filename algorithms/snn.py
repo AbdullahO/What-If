@@ -4,18 +4,21 @@ Refactoring the code in https://github.com/deshen24/syntheticNN
 """
 import sys
 import warnings
-from typing import Any, Iterator, List, Tuple, Union, Optional
+from typing import Any, Iterator, List, Optional, Tuple, Union
 
 import networkx as nx
 import numpy as np
 import pandas as pd
+import sparse
+import tensorly as tl
 from cachetools import cached
 from cachetools.keys import hashkey
 from networkx.algorithms.clique import find_cliques  # type: ignore
+from numpy import float64, int64, ndarray
 from sklearn.utils import check_array  # type: ignore
 
+from algorithms.als import AlternatingLeastSquares as ALS
 from algorithms.base import FillTensorBase, WhatIFAlgorithm
-from numpy import float64, int64, ndarray
 
 
 class SNN(WhatIFAlgorithm):
@@ -88,23 +91,9 @@ class SNN(WhatIFAlgorithm):
         self.actions_dict: Optional[dict] = None
         self.units_dict: Optional[dict] = None
         self.time_dict: Optional[dict] = None
-        self.matrix: Optional[ndarray] = None
         self.min_singular_value = min_singular_value
-
-    def __repr__(self):
-        """
-        print parameters of SNN class
-        """
-        return str(self)
-
-    def __str__(self):
-        field_list = []
-        for (k, v) in sorted(self.__dict__.items()):
-            if (v is None) or (isinstance(v, (float, int))):
-                field_list.append("%s=%s" % (k, v))
-            elif isinstance(v, str):
-                field_list.append("%s='%s'" % (k, v))
-        return "%s(%s)" % (self.__class__.__name__, ", ".join(field_list))
+        self.tensor_nans: Optional[sparse.COO] = None
+        self.tensor_cp_factors: Optional[List[tl.CPTensor]] = None
 
     def fit(
         self,
@@ -126,27 +115,55 @@ class SNN(WhatIFAlgorithm):
             covariates (list, optional): list of names for the covariate columns. Defaults to None.
 
         """
-        # get tensor from df and labels
         assert len(metrics) == 1, "method can only support single metric for now"
         self.metric = metrics[0]
+
         # convert time to datetime column
         df[time_column] = pd.to_datetime(df[time_column])
-        # get tensor dimensions
+
+        # get tensor from df and labels
         tensor, N, I, T = self._get_tensor(
             df, unit_column, time_column, actions, metrics
         )
 
-        # TODO: only save/load one of these representations
-        # TODO: actually, just save ALS output tensors and later reconstruct
-
         # tensor to matrix
-        self.matrix = tensor.reshape([N, I * T])
+        matrix = tensor.reshape([N, I * T])
 
         # fill matrix
-        self.matrix_full = self._fit_transform(self.matrix)
+        snn_imputed_matrix = self._fit_transform(matrix)
 
-        # reshape matrix
-        self.tensor = self.matrix_full.reshape([N, T, I])
+        # reshape matrix into tensor
+        tensor = snn_imputed_matrix.reshape([N, T, I])
+
+        self.tensor_nans = sparse.COO.from_numpy(np.isnan(tensor))
+
+        # Apply Alternating Least Squares to decompose the tensor into CP form
+        als_model = ALS()
+
+        # Modifies tensor by filling nans with zeros
+        als_model.fit(tensor)
+
+        # Only save the ALS output tensors
+        self.tensor_cp_factors = als_model.cp_factors
+
+    def get_tensor_from_factors(
+        self,
+        unit_idx: Optional[List[int]] = None,
+        time_idx: Optional[List[int]] = None,
+    ):
+        tensor = ALS._predict(
+            self.tensor_cp_factors, unit_idx=unit_idx, time_idx=time_idx
+        )
+        if self.tensor_nans is not None:
+            # Assumes factors are in order N, T, I (unit, time, intervention)
+            tensor_nans = self.tensor_nans
+            if unit_idx is not None:
+                tensor_nans = tensor_nans[unit_idx]
+            if time_idx is not None:
+                tensor_nans = tensor_nans[:, time_idx]
+            mask = tensor_nans.todense()
+            tensor[mask] = np.nan
+        return tensor
 
     def query(
         self,
@@ -172,10 +189,7 @@ class SNN(WhatIFAlgorithm):
         # TODO: validate this
         true_intervention_assignment_matrix = self.true_intervention_assignment_matrix
 
-        # TODO: validate this
-        tensor = self.tensor
-
-        # TODO: NEED TO LOAD everything above this for prediction
+        # TODO: NEED TO LOAD everything above this for prediction, along with self.get_tensor_from_factors
 
         # Get the units time, action, and action_time_range indices
         unit_idx = [units_dict[u] for u in units]
@@ -185,6 +199,8 @@ class SNN(WhatIFAlgorithm):
         timesteps = [t for t in time_dict.keys() if t <= _time[1] and t >= _time[0]]
         # get idx
         time_idx = [time_dict[t] for t in timesteps]
+
+        tensor = self.get_tensor_from_factors(unit_idx=unit_idx, time_idx=time_idx)
 
         # convert to timestamp
         _action_time_range = [pd.Timestamp(t) for t in action_time_range]
@@ -205,13 +221,9 @@ class SNN(WhatIFAlgorithm):
         # get it for only the time frame of interest
         assignment = assignment[:, time_idx]
 
-        # Get the right tensor slices |request units| x |request time range| x |actions|
-        tensor_unit_time = tensor[unit_idx, :][:, time_idx, :]
         # Select the right matrix based on the actions selected
         assignment = assignment.reshape([assignment.shape[0], assignment.shape[1], 1])
-        selected_matrix = np.take_along_axis(tensor_unit_time, assignment, axis=2)[
-            :, :, 0
-        ]
+        selected_matrix = np.take_along_axis(tensor, assignment, axis=2)[:, :, 0]
 
         # return unit X time DF
         out_df = pd.DataFrame(data=selected_matrix, index=units, columns=timesteps)
@@ -296,8 +308,6 @@ class SNN(WhatIFAlgorithm):
         I = len(list_of_actions)
         self.actions_dict = dict(zip(list_of_actions, np.arange(I)))
 
-        # init tensors
-        tensor = np.full([N, T, I], np.nan)
         # get tensor values
         metric_matrix_df = df.pivot(
             index=unit_column, columns=time_column, values=metrics[0]
@@ -305,18 +315,34 @@ class SNN(WhatIFAlgorithm):
         self.units_dict = dict(zip(metric_matrix_df.index, np.arange(N)))
         self.time_dict = dict(zip(metric_matrix_df.columns, np.arange(T)))
 
+        # save counts of unique units, timesteps, interventions
+        self.N = N
+        self.T = T
+        self.I = I
+
+        # add the action_idx to each row
         df["intervention_assignment"] = (
             df[actions].agg("-".join, axis=1).map(self.actions_dict).values
         )
+
+        # create assignment matrix
         self.true_intervention_assignment_matrix = df.pivot(
             index=unit_column, columns=time_column, values="intervention_assignment"
         ).values
 
+        # init tensor
+        tensor = np.full([N, T, I], np.nan)
+
+        # fill tensor with metric_matrix values in appropriate locations
         metric_matrix = metric_matrix_df.values
         for action_idx in range(I):
-            tensor[
-                self.true_intervention_assignment_matrix == action_idx, action_idx
-            ] = metric_matrix[self.true_intervention_assignment_matrix == action_idx]
+            unit_time_received_action_idx = (
+                self.true_intervention_assignment_matrix == action_idx
+            )
+            tensor[unit_time_received_action_idx, action_idx] = metric_matrix[
+                unit_time_received_action_idx
+            ]
+
         return tensor, N, I, T
 
     def _check_input_matrix(self, X: ndarray, missing_mask: ndarray) -> None:

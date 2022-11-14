@@ -8,6 +8,7 @@ import pytest
 from numpy import ndarray
 
 from algorithms.snn import SNN
+from algorithms.als import AlternatingLeastSquares as ALS
 
 current_dir = os.getcwd()
 
@@ -149,16 +150,29 @@ def snn_model() -> SNN:
 
 @pytest.fixture(scope="session")
 def snn_model_matrix(snn_model: SNN) -> ndarray:
-    X = snn_model.matrix
-    assert X is not None
-    return X
+    unit_column = "unit_id"
+    time_column = "time"
+    actions = ["ads"]
+    metrics = ["sales"]
+    df = get_store_sales_simple_df()
+    # convert time to datetime column
+    df[time_column] = pd.to_datetime(df[time_column])
+    # get tensor and dimensions
+    tensor, N, I, T = snn_model._get_tensor(
+        df, unit_column, time_column, actions, metrics
+    )
+    matrix = tensor.reshape([N, I * T])
+    return matrix
 
 
 @pytest.fixture(scope="session")
 def snn_model_matrix_full(snn_model: SNN) -> ndarray:
-    X_full = snn_model.matrix_full
-    assert X_full is not None
-    return X_full
+    N = snn_model.N
+    T = snn_model.T
+    I = snn_model.I
+    tensor = snn_model.get_tensor_from_factors()
+    matrix_full = tensor.reshape([N, I * T])
+    return matrix_full
 
 
 @pytest.fixture(scope="session")
@@ -224,7 +238,7 @@ def test_split(snn_model: SNN, expected_anchor_rows: ndarray, k: int):
 
 def test_model_str(snn_model: SNN):
     assert str(snn_model) == (
-        "SNN(linear_span_eps=0.1, max_rank=None, max_value=None,"
+        "SNN(I=3, N=100, T=50, linear_span_eps=0.1, max_rank=None, max_value=None,"
         " metric='sales', min_singular_value=1e-07, min_value=None,"
         " n_neighbors=1, random_splits=False, spectral_t=None, subspace_eps=0.1,"
         " verbose=False, weights='uniform')"
@@ -302,7 +316,7 @@ def test_get_anchors(
     expected_anchor_cols: ndarray,
 ):
     """Test the _get_anchors function"""
-    snn_model._get_anchors.cache.clear()
+    snn_model._get_anchors.cache.clear()  # type: ignore
     obs_rows, obs_cols = example_obs_rows_and_cols
     anchor_rows, anchor_cols = snn_model._get_anchors(
         snn_model_matrix, obs_rows, obs_cols
@@ -320,7 +334,7 @@ def test_get_anchors(
     assert not np.any(np.isnan(B)), "snn_model_matrix_full: B contains NaN"
 
     # Test matrix_full, which should short circuit and return the input
-    snn_model._get_anchors.cache.clear()
+    snn_model._get_anchors.cache.clear()  # type: ignore
     anchor_rows, anchor_cols = snn_model._get_anchors(
         snn_model_matrix_full, obs_rows, obs_cols
     )
@@ -339,7 +353,7 @@ def test_find_anchors(
     expected_anchor_cols: ndarray,
 ):
     """Test the _find_anchors function"""
-    snn_model._get_anchors.cache.clear()
+    snn_model._get_anchors.cache.clear()  # type: ignore
     anchor_rows, anchor_cols = snn_model._find_anchors(
         snn_model_matrix, example_missing_pair
     )
@@ -418,7 +432,7 @@ def test_get_beta(
     expected_train_error: float,
 ):
     """Test the _get_beta function"""
-    snn_model._get_beta.cache.clear()
+    snn_model._get_beta.cache.clear()  # type: ignore
     missing_row, _missing_col = example_missing_pair
     _anchor_rows = frozenset(expected_anchor_rows)
     _anchor_cols = frozenset(expected_anchor_cols)
@@ -434,9 +448,9 @@ def test_clip(snn_model: SNN):
     """Test the _clip function"""
     snn_model.min_value = 1
     snn_model.max_value = 5
-    assert snn_model._clip(11) == 5, "should clip to max_value"
-    assert snn_model._clip(0) == 1, "should clip to min_value"
-    assert snn_model._clip(-10) == 1, "should clip to min_value"
+    assert snn_model._clip(np.float64(11.0)) == 5, "should clip to max_value"
+    assert snn_model._clip(np.float64(0.1)) == 1, "should clip to min_value"
+    assert snn_model._clip(np.float64(-10.5)) == 1, "should clip to min_value"
     # Put back for other tests. TODO: use a context manager?
     snn_model.min_value = None
     snn_model.max_value = None
@@ -486,17 +500,34 @@ def test_get_tensor(snn_model_matrix: ndarray):
     assert np.allclose(matrix, snn_model_matrix, equal_nan=True), error_message
 
 
-def test_fit_transform(snn_model_matrix_full):
+def test_fit_transform(snn_model_matrix_full: ndarray, snn_model_matrix: ndarray):
     """Test the _fit_transform function"""
     # Don't use snn_model fixture here
     df, model, tensor, N, I, T = get_new_snn_model_pre_fit()
+
     # tensor to matrix
     matrix = tensor.reshape([N, I * T])
-    output = model._fit_transform(matrix)
+    error_message = "_get_tensor matrix output not as expected"
+    assert np.allclose(matrix, snn_model_matrix, equal_nan=True), error_message
+    snn_imputed_matrix = model._fit_transform(matrix)
     error_message = "_fit_transform output shape not as expected"
-    assert output.shape == (100, 150), error_message
+    assert snn_imputed_matrix.shape == (100, 150), error_message
+
+    # Check that we get the same ALS output
+    snn_imputed_tensor = snn_imputed_matrix.reshape([N, T, I])
+    nans_mask = np.isnan(snn_imputed_tensor)
+    als_model = ALS()
+    # Modifies tensor by filling nans with zeros
+    als_model.fit(snn_imputed_tensor)
+    # Reconstructs tensor from CP form, all values now filled
+    als_tensor = als_model.predict()
+    als_tensor[nans_mask] = np.nan
+    matrix_full = als_tensor.reshape([N, I * T])
+
     error_message = "_fit_transform output not as expected"
-    assert np.allclose(output, snn_model_matrix_full, equal_nan=True), error_message
+    assert np.allclose(
+        matrix_full, snn_model_matrix_full, equal_nan=True
+    ), error_message
 
 
 def test_check_input_matrix(snn_model: SNN, snn_model_matrix: ndarray):
