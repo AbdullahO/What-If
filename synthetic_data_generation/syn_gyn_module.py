@@ -8,7 +8,8 @@ import tensorly as tl
 from sklearn.cluster import KMeans
 import os
 import json
-from typing import List, Optional
+from typing import List, Optional, Any
+from numpy import ndarray
 
 # set backend to numpy explicitly
 tl.set_backend("numpy")
@@ -23,7 +24,7 @@ class UnitCov:
         self,
         name: str,
         discrete: Optional[bool] = True,
-        categories: Optional[list] = None,
+        categories: Optional[ndarray] = None,
         cov_range: Optional[list] = None,
     ):
         """_summary_
@@ -57,7 +58,7 @@ class Metric:
         name: str,
         metric_range: Optional[list] = None,
         difference_metric: Optional[bool] = False,
-        init_values_range: Optional[bool] = None,
+        init_values_range: Optional[List[int]] = None,
         clip_range: Optional[list] = None,
     ):
         """base class for metric
@@ -251,7 +252,7 @@ class SyntheticDataModule:
         self.num_interventions = num_interventions
         self.num_metrics = len(metrics)
         self.metrics = metrics
-        self.effects = []
+        self.effects: List[Any] = []
         self.tensor = None
         self.freq = freq
         self.df = None
@@ -267,8 +268,8 @@ class SyntheticDataModule:
         self.metrics_range = [metric.range for metric in metrics]
         self.assignments_labels = None
         self.assignments = None
-        self.subpopulations = []
-        self.subpopulations_funcs = []
+        self.subpopulations: List[Any] = []
+        self.subpopulations_funcs: List[Any] = []
 
     def generate(
         self,
