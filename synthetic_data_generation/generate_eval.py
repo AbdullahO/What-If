@@ -1,6 +1,11 @@
 import pandas as pd
 import numpy as np
-from synthetic_data_generation.syn_gyn_module import *
+from synthetic_data_generation.syn_gyn_module import (
+    Metric,
+    UnitCov,
+    IntCov,
+    SyntheticDataModule,
+)
 
 
 def get_sales_data():
