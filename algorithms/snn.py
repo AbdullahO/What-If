@@ -4,15 +4,17 @@ Refactoring the code in https://github.com/deshen24/syntheticNN
 """
 import sys
 import warnings
-from typing import Any, Iterator, List, Optional, Tuple, Union
+from typing import Any, Iterator, List, Optional, Tuple
 
 import networkx as nx
 import numpy as np
+import sparse
 from cachetools import cached
 from cachetools.keys import hashkey
 from networkx.algorithms.clique import find_cliques  # type: ignore
 from numpy import float64, int64, ndarray
 from sklearn.utils import check_array  # type: ignore
+
 from algorithms.fill_tensor_base import FillTensorBase
 
 
@@ -92,22 +94,6 @@ class SNN(FillTensorBase):
 
     def summary(self):
         """returns method-specifc summary"""
-        raise NotImplementedError()
-
-    def save(self, path):
-        """save trained model"""
-        raise NotImplementedError()
-
-    def save_binary(self, path):
-        """save trained model to bytes"""
-        raise NotImplementedError()
-
-    def load(self, path):
-        """load model from file"""
-        raise NotImplementedError()
-
-    def load_binary(self, path):
-        """load trained model from bytes"""
         raise NotImplementedError()
 
     def _initialize(self, X: ndarray, missing_set: ndarray) -> Tuple[ndarray, ndarray]:

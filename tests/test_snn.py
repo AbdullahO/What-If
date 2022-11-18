@@ -167,9 +167,13 @@ def snn_model_matrix(snn_model: SNN) -> ndarray:
 
 @pytest.fixture(scope="session")
 def snn_model_matrix_full(snn_model: SNN) -> ndarray:
-    N = snn_model.N
-    T = snn_model.T
-    I = snn_model.I
+    snn_model.check_model_for_predict()
+    assert snn_model.units_dict is not None
+    assert snn_model.time_dict is not None
+    assert snn_model.actions_dict is not None
+    N = len(snn_model.units_dict)
+    T = len(snn_model.time_dict)
+    I = len(snn_model.actions_dict)
     tensor = snn_model.get_tensor_from_factors()
     matrix_full = tensor.reshape([N, I * T])
     return matrix_full
@@ -238,7 +242,7 @@ def test_split(snn_model: SNN, expected_anchor_rows: ndarray, k: int):
 
 def test_model_str(snn_model: SNN):
     assert str(snn_model) == (
-        "SNN(I=3, N=100, T=50, linear_span_eps=0.1, max_rank=None, max_value=None,"
+        "SNN(linear_span_eps=0.1, max_rank=None, max_value=None,"
         " metric='sales', min_singular_value=1e-07, min_value=None,"
         " n_neighbors=1, random_splits=False, spectral_t=None, subspace_eps=0.1,"
         " verbose=False, weights='uniform')"
@@ -576,7 +580,7 @@ def test_check_weights(snn_model: SNN, weights):
             snn_model._check_weights(weights)
 
 
-def test_fit(snn_model: SNN, snn_expected_query_output: pd.DataFrame):
+def check_model_output(snn_model: SNN, snn_expected_query_output: pd.DataFrame):
     model_query_output = snn_model.query(
         [0],
         ["2020-01-10", " 2020-02-19"],
@@ -592,3 +596,24 @@ def test_fit(snn_model: SNN, snn_expected_query_output: pd.DataFrame):
         "ad 0": 1,
         "ad 1": 2,
     }, "Actions dict difference"
+    return model_query_output
+
+
+def test_fit(snn_model: SNN, snn_expected_query_output: pd.DataFrame):
+    check_model_output(snn_model, snn_expected_query_output)
+
+
+def test_save_load_binary(snn_model: SNN, snn_expected_query_output: pd.DataFrame):
+    saved_model_binary_string = snn_model.save_binary()
+    new_model = SNN(verbose=False)
+    new_model.load_binary(saved_model_binary_string)
+    check_model_output(new_model, snn_expected_query_output)
+
+
+def test_save_load(snn_model: SNN, snn_expected_query_output: pd.DataFrame):
+    path = "save_model.npz"
+    snn_model.save(path)
+    new_model = SNN(verbose=False)
+    new_model.load(path)
+    check_model_output(new_model, snn_expected_query_output)
+    os.remove(path)

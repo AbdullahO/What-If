@@ -1,11 +1,13 @@
-from abc import ABC, abstractmethod
-from typing import Any, Iterator, List, Optional, Tuple, Union
+import io
+from abc import abstractmethod
+from typing import List, Optional, Tuple
+
 import numpy as np
-from numpy import float64, int64, ndarray
-import numpy.typing as np_typing
 import pandas as pd
 import sparse
 import tensorly as tl
+from numpy import ndarray
+
 from algorithms.als import AlternatingLeastSquares as ALS
 from algorithms.base import WhatIFAlgorithm
 
@@ -21,15 +23,23 @@ class FillTensorBase(WhatIFAlgorithm):
         self.tensor_nans: Optional[sparse.COO] = None
         self.tensor_cp_factors: Optional[List[tl.CPTensor]] = None
 
-    # proerties
-    @property
-    def tensor_shape(self):
-        return self._tensor_shape
-
-    @tensor_shape.setter
-    def tensor_shape(self, shape_):
-        assert isinstance(shape_, tuple)
-        self._tensor_shape = shape_
+    def check_model_for_predict(self):
+        error_message_base = " is None, have you called fit()?"
+        if self.tensor_cp_factors is None:
+            raise ValueError(f"self.tensor_cp_factors{error_message_base}")
+        # TODO: right now we will raise ValueError if tensor_nans is None, should we allow None?
+        if self.tensor_nans is None:
+            raise ValueError(f"self.tensor_nans{error_message_base}")
+        if self.units_dict is None:
+            raise ValueError(f"self.units_dict{error_message_base}")
+        if self.time_dict is None:
+            raise ValueError(f"self.time_dict{error_message_base}")
+        if self.actions_dict is None:
+            raise ValueError(f"self.actions_dict{error_message_base}")
+        if self.true_intervention_assignment_matrix is None:
+            raise ValueError(
+                f"self.true_intervention_assignment_matrix{error_message_base}"
+            )
 
     def fit(
         self,
@@ -91,24 +101,13 @@ class FillTensorBase(WhatIFAlgorithm):
         action_time_range: List[str],
     ) -> pd.DataFrame:
         """returns answer to what if query"""
+        self.check_model_for_predict()
         units_dict = self.units_dict
-        if units_dict is None:
-            raise Exception("self.units_dict is None, have you called fit()?")
-
         time_dict = self.time_dict
-        if time_dict is None:
-            raise Exception("self.time_dict is None, have you called fit()?")
-
         actions_dict = self.actions_dict
-        if actions_dict is None:
-            raise Exception("self.actions_dict is None, have you called fit()?")
-
-        # TODO: validate this
         true_intervention_assignment_matrix = self.true_intervention_assignment_matrix
 
-        # TODO: NEED TO LOAD everything above this for prediction, along with self.get_tensor_from_factors
-
-        # Get the units time, action, and action_time_range indices
+        # Get the units, time, action, and action_time_range indices
         unit_idx = [units_dict[u] for u in units]
         # convert to timestamp
         _time = [pd.Timestamp(t) for t in time]
@@ -169,11 +168,6 @@ class FillTensorBase(WhatIFAlgorithm):
         self.units_dict = dict(zip(metric_matrix_df.index, np.arange(N)))
         self.time_dict = dict(zip(metric_matrix_df.columns, np.arange(T)))
 
-        # save counts of unique units, timesteps, interventions
-        self.N = N
-        self.T = T
-        self.I = I
-
         # add the action_idx to each row
         df["intervention_assignment"] = (
             df[actions].agg("-".join, axis=1).map(self.actions_dict).values
@@ -219,7 +213,7 @@ class FillTensorBase(WhatIFAlgorithm):
         return tensor
 
     @abstractmethod
-    def _fit_transform(self, Y: np_typing.NDArray[Any]) -> np_typing.NDArray[Any]:
+    def _fit_transform(self, Y: ndarray) -> ndarray:
         """take sparse tensor and return a full tensor
 
         Args:
@@ -237,18 +231,95 @@ class FillTensorBase(WhatIFAlgorithm):
         """returns method-specifc summary"""
         raise NotImplementedError()
 
-    def save(self, path):
-        """save trained model"""
-        raise NotImplementedError()
+    @staticmethod
+    def sparse_COO_to_dict(sparse_array: sparse.COO):
+        # tensor_nans mask is saved as a sparse.COO array
+        # Get parts of sparse array to save individually
+        return {
+            "data": sparse_array.data,
+            "shape": sparse_array.shape,
+            "fill_value": sparse_array.fill_value,
+            "coords": sparse_array.coords,
+        }
 
-    def save_binary(self, path):
-        """save trained model to bytes"""
-        raise NotImplementedError()
+    @staticmethod
+    def sparse_COO_from_dict(sparse_array_dict: dict) -> sparse.COO:
+        # https://github.com/pydata/sparse/blob/master/sparse/_io.py#L71
+        coords = sparse_array_dict["coords"]
+        data = sparse_array_dict["data"]
+        shape = tuple(sparse_array_dict["shape"])
+        fill_value = sparse_array_dict["fill_value"][()]
+        return sparse.COO(
+            coords=coords,
+            data=data,
+            shape=shape,
+            sorted=True,
+            has_duplicates=False,
+            fill_value=fill_value,
+        )
 
-    def load(self, path):
-        """load model from file"""
-        raise NotImplementedError()
+    def get_model_dict_for_save(self):
+        self.check_model_for_predict()
+        tensor_nans_dict = self.sparse_COO_to_dict(self.tensor_nans)
+        model_dict = {
+            "actions_dict": self.actions_dict,
+            "units_dict": self.units_dict,
+            "time_dict": self.time_dict,
+            "tensor_cp_factors": np.array(self.tensor_cp_factors),
+            "true_intervention_assignment_matrix": self.true_intervention_assignment_matrix,
+            **{f"tensor_nans_{key}": value for key, value in tensor_nans_dict.items()},
+        }
+        return model_dict
 
-    def load_binary(self, path):
-        """load trained model from bytes"""
-        raise NotImplementedError()
+    def save(self, path_or_obj):
+        """
+        Save trained model to a file
+        """
+        # TODO: is there a way to save to a representation where we don't have to load the whole factor matrix?
+        model_dict = self.get_model_dict_for_save()
+        np.savez_compressed(path_or_obj, **model_dict)
+
+    def save_binary(self):
+        """
+        Save trained model to a byte string
+        """
+        bytes_io = io.BytesIO()
+        self.save(bytes_io)
+        bytes_str = bytes_io.getvalue()
+        return bytes_str
+
+    def load(self, path_or_obj):
+        """
+        Load trained model from file
+        """
+        loaded_dict = dict(np.load(path_or_obj, allow_pickle=True))
+        actions_dict = loaded_dict.pop("actions_dict").tolist()
+        units_dict = loaded_dict.pop("units_dict").tolist()
+        time_dict = loaded_dict.pop("time_dict").tolist()
+        tensor_cp_factors = loaded_dict.pop("tensor_cp_factors").tolist()
+        true_intervention_assignment_matrix = loaded_dict.pop(
+            "true_intervention_assignment_matrix"
+        )
+        tensor_nans_prefix = "tensor_nans_"
+        tensor_nans_dict = {
+            key[len(tensor_nans_prefix) :]: value
+            for key, value in loaded_dict.items()
+            if key.startswith(tensor_nans_prefix)
+        }
+        tensor_nans = self.sparse_COO_from_dict(tensor_nans_dict)
+        self.actions_dict = actions_dict
+        self.units_dict = units_dict
+        self.time_dict = time_dict
+        self.tensor_cp_factors = tensor_cp_factors
+        self.true_intervention_assignment_matrix = true_intervention_assignment_matrix
+        self.tensor_nans = tensor_nans
+        self.check_model_for_predict()
+
+    def load_binary(self, bytes_str):
+        """
+        Load trained model from bytes
+        """
+        # Allow pickle is required to save/load dictionaries.
+        # We could save them separately instead.
+        bytes_io = io.BytesIO(bytes_str)
+        self.load(bytes_io)
