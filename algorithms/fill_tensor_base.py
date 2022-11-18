@@ -258,7 +258,6 @@ class FillTensorBase(WhatIFAlgorithm):
             fill_value=fill_value,
         )
 
-
     def get_model_dict_for_save(self):
         self.check_model_for_predict()
         tensor_nans_dict = self.sparse_COO_to_dict(self.tensor_nans)
@@ -272,50 +271,38 @@ class FillTensorBase(WhatIFAlgorithm):
         }
         return model_dict
 
-    def save(self, path):
+    def save(self, path_or_obj):
         """
         Save trained model to a file
         """
-        # TODO: write a test and debug into here, see what everything looks like
-        # TODO: need to save all as ndarray? can use np.load(path, allow_pickle=True)
-        # https://numpy.org/doc/stable/reference/generated/numpy.savez_compressed.html
+        # TODO: is there a way to save to a representation where we don't have to load the whole factor matrix?
         model_dict = self.get_model_dict_for_save()
-        np.savez_compressed(path, **model_dict)
-        raise NotImplementedError()
+        np.savez_compressed(path_or_obj, **model_dict)
 
     def save_binary(self):
         """
         Save trained model to a byte string
         """
-        # TODO: is there a way to save to a representation where we don't have to load the whole factor matrix?~
-        model_dict = self.get_model_dict_for_save()
         bytes_io = io.BytesIO()
-        np.savez_compressed(bytes_io, **model_dict)
+        self.save(bytes_io)
         bytes_str = bytes_io.getvalue()
         return bytes_str
 
-    def load(self, path):
+    def load(self, path_or_obj):
         """
         Load trained model from file
         """
-        raise NotImplementedError()
-
-    def load_binary(self, bytes_str):
-        """
-        Load trained model from bytes
-        """
-        # Allow pickle is required to save/load dictionaries.
-        # We could save them separately instead.
-        bytes_io = io.BytesIO(bytes_str)
-        loaded_dict = dict(np.load(bytes_io, allow_pickle=True))
+        loaded_dict = dict(np.load(path_or_obj, allow_pickle=True))
         actions_dict = loaded_dict.pop("actions_dict").tolist()
         units_dict = loaded_dict.pop("units_dict").tolist()
         time_dict = loaded_dict.pop("time_dict").tolist()
         tensor_cp_factors = loaded_dict.pop("tensor_cp_factors").tolist()
-        true_intervention_assignment_matrix = loaded_dict.pop("true_intervention_assignment_matrix")
+        true_intervention_assignment_matrix = loaded_dict.pop(
+            "true_intervention_assignment_matrix"
+        )
         tensor_nans_prefix = "tensor_nans_"
-        tensor_nans_dict = { 
-            key[len(tensor_nans_prefix):] : value
+        tensor_nans_dict = {
+            key[len(tensor_nans_prefix) :]: value
             for key, value in loaded_dict.items()
             if key.startswith(tensor_nans_prefix)
         }
@@ -328,4 +315,11 @@ class FillTensorBase(WhatIFAlgorithm):
         self.tensor_nans = tensor_nans
         self.check_model_for_predict()
 
-
+    def load_binary(self, bytes_str):
+        """
+        Load trained model from bytes
+        """
+        # Allow pickle is required to save/load dictionaries.
+        # We could save them separately instead.
+        bytes_io = io.BytesIO(bytes_str)
+        self.load(bytes_io)

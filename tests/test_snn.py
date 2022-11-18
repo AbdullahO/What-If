@@ -608,3 +608,12 @@ def test_save_load_binary(snn_model: SNN, snn_expected_query_output: pd.DataFram
     new_model = SNN(verbose=False)
     new_model.load_binary(saved_model_binary_string)
     check_model_output(new_model, snn_expected_query_output)
+
+
+def test_save_load(snn_model: SNN, snn_expected_query_output: pd.DataFrame):
+    path = "save_model.npz"
+    snn_model.save(path)
+    new_model = SNN(verbose=False)
+    new_model.load(path)
+    check_model_output(new_model, snn_expected_query_output)
+    os.remove(path)
