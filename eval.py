@@ -4,9 +4,10 @@ from collections import namedtuple
 warnings.simplefilter(action="ignore", category=FutureWarning)
 import pandas as pd
 import numpy as np
-
+import argparse
 from algorithms.snn import SNN
 from algorithms.snn_biclustering import SNNBiclustering
+from algorithms.fill_tensor_ALS import ALS
 from sklearn.metrics import r2_score
 import time
 from synthetic_data_generation.generate_eval import (
@@ -14,23 +15,30 @@ from synthetic_data_generation.generate_eval import (
     sales_data_si_assignment,
     sales_data_random_assignment,
 )
-import argparse
 
 Metric = namedtuple(
     "Metric",
     "train_time  query_time r2 mse number_estimated_entries number_estimated_feasible_entries",
 )
-ALG_REGISTRY = {"SNN": SNN, "SNNBiclustering": SNNBiclustering}
+ALG_REGISTRY = {"SNN": SNN, "SNNBiclustering": SNNBiclustering, "ALS": ALS}
 
 
 def create_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--export", action="store_true", help="export data")
     parser.add_argument(
-        "--algorithm",
+        "--algorithms",
+        nargs="+",
         type=str,
-        default="SNN",
-        help=f"choose algorithm from {ALG_REGISTRY.keys()}",
+        default=["SNN"],
+        help=f"choose algorithms from {ALG_REGISTRY.keys()}",
+    )
+    parser.add_argument(
+        "--datasize",
+        nargs="+",
+        type=int,
+        default=[100],
+        help=f"choose algorithms from {ALG_REGISTRY.keys()}",
     )
     parser.add_argument(
         "--repeat",
@@ -41,13 +49,8 @@ def create_parser():
     return parser
 
 
-def evaluate(data_gen, algorithm, repeat):
+def evaluate(data_gen, algorithm, repeat, datasize):
     # generate data
-    data = data_gen()
-    df = data.ss_df
-    tensor = data.tensor
-    mask = data.mask
-    mask = mask.astype(bool)
     train_time = np.zeros([repeat])
     query_time = np.zeros([repeat])
     r2 = np.zeros([repeat])
@@ -55,6 +58,11 @@ def evaluate(data_gen, algorithm, repeat):
     number_estimated_entries = np.zeros([repeat])
     number_estimated_feasible_entries = np.zeros([repeat])
     for i in range(repeat):
+        data = data_gen(seed=i, num_units=datasize, num_timesteps=datasize)
+        df = data.ss_df
+        tensor = data.tensor
+        mask = data.mask
+        mask = mask.astype(bool)
         model = ALG_REGISTRY[algorithm](verbose=False)
         t = time.perf_counter()
         model.fit(
@@ -79,7 +87,6 @@ def evaluate(data_gen, algorithm, repeat):
         indices = [model.actions_dict[action] for action in ["ad 0", "ad 1", "ad 2"]]
         _tensor_est = model.get_tensor_from_factors()
         tensor_est = _tensor_est[:, :, indices]
-
         # accuracy ()
         notnan = ~np.isnan(tensor_est)
         r2[i] = r2_score(
@@ -123,6 +130,8 @@ def main():
     # init results dataframe
     res_df = pd.DataFrame(
         columns=[
+            "datasize",
+            "algorithm",
             "data name",
             "train_time (sec)",
             "query_time (ms)",
@@ -140,34 +149,41 @@ def main():
     number_estimated_entries = np.zeros([num_datasets, args.repeat])
     number_estimated_feasible_entries = np.zeros([num_datasets, args.repeat])
 
-    for k, data_gen in enumerate(datasets_generators[:]):
-        metrics = evaluate(data_gen, args.algorithm, args.repeat)
-        train_time[k, :] = metrics.train_time
-        query_time[k, :] = metrics.query_time
-        r2[k, :] = metrics.r2
-        mse[k, :] = metrics.mse
-        number_estimated_entries[k, :] = metrics.number_estimated_entries
-        number_estimated_feasible_entries[
-            k, :
-        ] = metrics.number_estimated_feasible_entries
-        print(f"Evaluate {args.algorithm} for {data_names[k]}")
-        print(f"Train time: \t {train_time[k,:].mean()}")
-        print(f"query time: \t {query_time[k,:].mean()}")
-        print(f"R2: \t {r2[k,:].mean()}")
-        print(f"RMSE: \t {np.sqrt(mse)[k,:].mean()}")
-        print(f"number of retrieved entries: \t {number_estimated_entries[k,:].mean()}")
-        print(
-            f"number of feasible retrieved entries: \t {number_estimated_feasible_entries[k,:].mean()}"
-        )
-        print("=" * 100)
-        res_df.loc[k] = [
-            data_names[k],
-            train_time[k, :].mean(),
-            query_time[k, :].mean(),
-            r2[k, :].mean(),
-            np.sqrt(mse)[k, :].mean(),
-            number_estimated_entries[k, :].mean(),
-        ]
+    for k, data_gen in enumerate(datasets_generators):
+        for alg in args.algorithms:
+            for datasize in args.datasize:
+                (
+                    train_time[k, :],
+                    query_time[k, :],
+                    r2[k, :],
+                    mse[k, :],
+                    number_estimated_entries[k, :],
+                    number_estimated_feasible_entries[k, :],
+                ) = evaluate(data_gen, alg, args.repeat, datasize)
+                print(f"Evaluate {alg} for {data_names[k]}")
+                print(f"Train time: \t {train_time[k,:].mean()}")
+                print(f"query time: \t {query_time[k,:].mean()}")
+                print(f"R2: \t {r2[k,:].mean()}")
+                print(f"RMSE: \t {np.sqrt(mse)[k,:].mean()}")
+                print(
+                    f"number of retrieved entries: \t {number_estimated_entries[k,:].mean()}"
+                )
+                print(
+                    f"number of feasible retrieved entries: \t {number_estimated_feasible_entries[k,:].mean()}"
+                )
+                print("=" * 100)
+                res_df.loc[res_df.shape[0]] = [
+                    datasize,
+                    alg,
+                    data_names[k],
+                    train_time[k, :].mean(),
+                    query_time[k, :].mean(),
+                    r2[k, :].mean(),
+                    np.sqrt(mse)[k, :].mean(),
+                    number_estimated_entries[k, :].mean(),
+                ]
+                res_df.to_csv("test_metrics.csv")
+
     print("summary:")
     print(res_df)
 

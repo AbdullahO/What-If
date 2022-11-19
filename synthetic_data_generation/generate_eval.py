@@ -8,13 +8,7 @@ from synthetic_data_generation.syn_gyn_module import (
 )
 
 
-def get_sales_data():
-    # Unit
-    num_units = 100
-
-    # Time
-    num_timesteps = 50
-
+def get_sales_data(num_units=100, num_timesteps=50):
     # Metrics
     metric1 = Metric("sales", metric_range=[0, 100000])
     metrics = [metric1]
@@ -73,13 +67,13 @@ def get_sales_data():
     return data
 
 
-def sales_data_staggering_assignment(seed=0):
+def sales_data_staggering_assignment(seed=0, num_units=100, num_timesteps=50):
 
     np.random.seed(seed)
-    data = get_sales_data()
+    data = get_sales_data(num_units, num_timesteps)
     subpop1, subpop2, subpop3 = data.subpopulations_funcs
     num_timesteps = data.num_timesteps
-    period_1 = {"intervention_assignment": "control", "until": 15}
+    period_1 = {"intervention_assignment": "control", "until": num_timesteps // 3}
 
     intervention_assignment = "cov_unit"
     selection_subpop = {
@@ -89,7 +83,7 @@ def sales_data_staggering_assignment(seed=0):
     }
     period_2 = {
         "intervention_assignment": intervention_assignment,
-        "until": 30,
+        "until": num_timesteps // 2,
         "assignment_subpop": selection_subpop,
     }
     selection_subpop = {
@@ -99,7 +93,7 @@ def sales_data_staggering_assignment(seed=0):
     }
     period_3 = {
         "intervention_assignment": intervention_assignment,
-        "until": 40,
+        "until": 2 * num_timesteps // 3,
         "assignment_subpop": selection_subpop,
     }
     selection_subpop = {
@@ -119,10 +113,10 @@ def sales_data_staggering_assignment(seed=0):
     return data
 
 
-def sales_data_random_assignment(seed=0):
+def sales_data_random_assignment(seed=0, num_units=100, num_timesteps=50):
 
     np.random.seed(seed)
-    data = get_sales_data()
+    data = get_sales_data(num_units, num_timesteps)
     num_timesteps = data.num_timesteps
     period_1 = {"intervention_assignment": "random", "until": num_timesteps}
     periods = [period_1]
@@ -131,13 +125,13 @@ def sales_data_random_assignment(seed=0):
     return data
 
 
-def sales_data_si_assignment(seed=0):
+def sales_data_si_assignment(seed=0, num_units=100, num_timesteps=50):
 
     np.random.seed(seed)
-    data = get_sales_data()
+    data = get_sales_data(num_units, num_timesteps)
     subpop1, subpop2, subpop3 = data.subpopulations_funcs
     num_timesteps = data.num_timesteps
-    period_1 = {"intervention_assignment": "control", "until": 20}
+    period_1 = {"intervention_assignment": "control", "until": 2 * num_timesteps // 5}
     intervention_assignment = "cov_unit"
     selection_subpop = {
         subpop1: [0.3, 0.3, 0.4],

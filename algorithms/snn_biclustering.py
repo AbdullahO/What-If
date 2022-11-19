@@ -218,6 +218,9 @@ class SNNBiclustering(SNN):
         complete missing entries in matrix
         """
         # tensor to matrix
+        N, T, I = X.shape
+        X = X.reshape([N, I * T])
+
         self.matrix = X
         self.mask = (~np.isnan(X)).astype(int)
 
@@ -230,9 +233,11 @@ class SNNBiclustering(SNN):
             self.clusters_row_matrix,
             self.clusters_col_matrix,
         ) = self._get_clusters_matrices()
-
         filled_matrix = self._snn_fit_transform(X, test_set)
-        return filled_matrix
+
+        # reshape matrix into tensor
+        tensor = filled_matrix.reshape([N, T, I])
+        return tensor
 
     @cached(
         cache=dict(),  # type: ignore

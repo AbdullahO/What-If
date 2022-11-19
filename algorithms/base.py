@@ -43,7 +43,7 @@ class WhatIFAlgorithm(ABC, StrReprBase):
         """
 
     @abstractmethod
-    def query(self, units, time, metric, action, action_range):
+    def query(self, units, time, metric, action, action_time_range):
         """returns answer to what if query"""
 
     @abstractmethod
