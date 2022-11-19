@@ -1,16 +1,23 @@
 import io
-from abc import abstractmethod
-from typing import List, Optional, Tuple
 import warnings
+from abc import abstractmethod
+from collections import namedtuple
+from typing import List, Optional, Tuple
+
 import numpy as np
-from sklearn.utils import check_array  # type: ignore
 import pandas as pd
 import sparse
 import tensorly as tl
 from numpy import ndarray
+from sklearn.utils import check_array  # type: ignore
 
 from algorithms.als import AlternatingLeastSquares as ALS
 from algorithms.base import WhatIFAlgorithm
+
+ModelTuple = namedtuple(
+    "ModelTuple",
+    "actions_dict units_dict time_dict tensor_nans tensor_cp_factors true_intervention_assignment_matrix",
+)
 
 
 class FillTensorBase(WhatIFAlgorithm):
@@ -27,7 +34,7 @@ class FillTensorBase(WhatIFAlgorithm):
         self.metric: Optional[str] = None
         self.true_intervention_assignment_matrix: Optional[ndarray] = None
 
-    def check_model_for_predict(self):
+    def check_model(self):
         error_message_base = " is None, have you called fit()?"
         if self.tensor_cp_factors is None:
             raise ValueError(f"self.tensor_cp_factors{error_message_base}")
@@ -44,6 +51,14 @@ class FillTensorBase(WhatIFAlgorithm):
             raise ValueError(
                 f"self.true_intervention_assignment_matrix{error_message_base}"
             )
+        return ModelTuple(
+            self.actions_dict,
+            self.units_dict,
+            self.time_dict,
+            self.tensor_nans,
+            self.tensor_cp_factors,
+            self.true_intervention_assignment_matrix,
+        )
 
     def fit(
         self,
@@ -99,11 +114,13 @@ class FillTensorBase(WhatIFAlgorithm):
         action_time_range: List[str],
     ) -> pd.DataFrame:
         """returns answer to what if query"""
-        self.check_model_for_predict()
-        units_dict = self.units_dict
-        time_dict = self.time_dict
-        actions_dict = self.actions_dict
-        true_intervention_assignment_matrix = self.true_intervention_assignment_matrix
+        model_tuple = self.check_model()
+        units_dict = model_tuple.units_dict
+        time_dict = model_tuple.time_dict
+        actions_dict = model_tuple.actions_dict
+        true_intervention_assignment_matrix = (
+            model_tuple.true_intervention_assignment_matrix
+        )
 
         # Get the units, time, action, and action_time_range indices
         unit_idx = [units_dict[u] for u in units]
@@ -257,14 +274,16 @@ class FillTensorBase(WhatIFAlgorithm):
         )
 
     def get_model_dict_for_save(self):
-        self.check_model_for_predict()
-        tensor_nans_dict = self.sparse_COO_to_dict(self.tensor_nans)
+        model_tuple = self.check_model()
+        tensor_nans_dict = self.sparse_COO_to_dict(model_tuple.tensor_nans)
         model_dict = {
-            "actions_dict": self.actions_dict,
-            "units_dict": self.units_dict,
-            "time_dict": self.time_dict,
-            "tensor_cp_factors": np.array(self.tensor_cp_factors, dtype="object"),
-            "true_intervention_assignment_matrix": self.true_intervention_assignment_matrix,
+            "actions_dict": model_tuple.actions_dict,
+            "units_dict": model_tuple.units_dict,
+            "time_dict": model_tuple.time_dict,
+            "tensor_cp_factors": np.array(
+                model_tuple.tensor_cp_factors, dtype="object"
+            ),
+            "true_intervention_assignment_matrix": model_tuple.true_intervention_assignment_matrix,
             **{f"tensor_nans_{key}": value for key, value in tensor_nans_dict.items()},
         }
         return model_dict
@@ -311,7 +330,7 @@ class FillTensorBase(WhatIFAlgorithm):
         self.tensor_cp_factors = tensor_cp_factors
         self.true_intervention_assignment_matrix = true_intervention_assignment_matrix
         self.tensor_nans = tensor_nans
-        self.check_model_for_predict()
+        self.check_model()
 
     def load_binary(self, bytes_str):
         """
