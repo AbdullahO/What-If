@@ -167,13 +167,10 @@ def snn_model_matrix(snn_model: SNN) -> ndarray:
 
 @pytest.fixture(scope="session")
 def snn_model_matrix_full(snn_model: SNN) -> ndarray:
-    snn_model.check_model_for_predict()
-    assert snn_model.units_dict is not None
-    assert snn_model.time_dict is not None
-    assert snn_model.actions_dict is not None
-    N = len(snn_model.units_dict)
-    T = len(snn_model.time_dict)
-    I = len(snn_model.actions_dict)
+    model_tuple = snn_model.check_model()
+    N = len(model_tuple.units_dict)
+    T = len(model_tuple.time_dict)
+    I = len(model_tuple.actions_dict)
     tensor = snn_model.get_tensor_from_factors()
     matrix_full = tensor.reshape([N, I * T])
     return matrix_full
