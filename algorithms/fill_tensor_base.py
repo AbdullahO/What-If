@@ -263,7 +263,7 @@ class FillTensorBase(WhatIFAlgorithm):
             "actions_dict": self.actions_dict,
             "units_dict": self.units_dict,
             "time_dict": self.time_dict,
-            "tensor_cp_factors": np.array(self.tensor_cp_factors),
+            "tensor_cp_factors": np.array(self.tensor_cp_factors, dtype="object"),
             "true_intervention_assignment_matrix": self.true_intervention_assignment_matrix,
             **{f"tensor_nans_{key}": value for key, value in tensor_nans_dict.items()},
         }
