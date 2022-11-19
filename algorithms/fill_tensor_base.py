@@ -351,8 +351,7 @@ class FillTensorBase(WhatIFAlgorithm):
         if self.tensor_cp_factors is None:
             raise Exception("fit must be called before partial fit!")
         new_tensor = self._get_partial_tensor(new_df)
-        new_time_factors = self.update_factors(new_tensor)
-        self.tensor_cp_factors[1] = new_time_factors
+        new_time_factors = self.update_time_factors(new_tensor)
         # update nan mask
         ## TODO: update nan mask based on original fit:
         #        1. if intervention/uni/time never observed --> nan (for all methods)
@@ -365,7 +364,9 @@ class FillTensorBase(WhatIFAlgorithm):
             old_shape[2],
         )
 
-    def update_factors(self, new_tensor: ndarray, lambd: float = 0.0001) -> ndarray:
+    def update_time_factors(
+        self, new_tensor: ndarray, lambd: float = 0.0001
+    ) -> ndarray:
         """update time factors using the new observations in new tensor ([N x new_timesteps x I])
 
         Args:
@@ -395,6 +396,8 @@ class FillTensorBase(WhatIFAlgorithm):
             assert b.shape == (k,), b.shape
             assert mat.shape == (k, k), mat.shape
             Y_new[Y.shape[0] + col_i, :] = np.linalg.solve(mat, b)
+
+        self.tensor_cp_factors[1] = Y_new
         return Y_new
 
     @abstractmethod
