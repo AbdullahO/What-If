@@ -252,7 +252,7 @@ class FillTensorBase(WhatIFAlgorithm):
             dict(zip(metric_matrix_df.columns, np.arange(max_t, max_t + T)))
         )
 
-        ## TODO: potential storage issue ..
+        ## TODO: potential storage issue, we're storing an N xT matrix that grows with T (and N).
         self.true_intervention_assignment_matrix = np.concatenate(
             [
                 self.true_intervention_assignment_matrix,
@@ -312,7 +312,8 @@ class FillTensorBase(WhatIFAlgorithm):
 
         return tensor
 
-    def _populate_tensor(self, N, T, I, metric_df, assignment_matrix):
+    @staticmethod
+    def _populate_tensor(N, T, I, metric_df, assignment_matrix):
         # init tensor
         tensor = np.full([N, T, I], np.nan)
 
