@@ -23,9 +23,12 @@ ModelTuple = namedtuple(
 class FillTensorBase(WhatIFAlgorithm):
     """Base class for all whatif algorithms that uses the tensor view"""
 
-    def __init__(self, verbose: Optional[bool] = False) -> None:
+    def __init__(
+        self, verbose: Optional[bool] = False, min_singular_value: float = 1e-7
+    ) -> None:
 
         self.verbose = verbose
+        self.min_singular_value = min_singular_value
         self.actions_dict: Optional[dict] = None
         self.units_dict: Optional[dict] = None
         self.time_dict: Optional[dict] = None
@@ -388,14 +391,11 @@ class FillTensorBase(WhatIFAlgorithm):
             old_shape[2],
         )
 
-    def update_time_factors(
-        self, new_tensor: ndarray, lambd: float = 0.0001
-    ) -> ndarray:
+    def update_time_factors(self, new_tensor: ndarray) -> ndarray:
         """update time factors using the new observations in new tensor ([N x new_timesteps x I])
 
         Args:
             new_tensor (ndarray): new tensor that correspond to new obseravations
-            lambd (float, optional):  Regulaization parameter. Defaults to 0.0001.
 
         Returns:
             ndarray: new time factors (new_timesteps x k)
@@ -419,11 +419,12 @@ class FillTensorBase(WhatIFAlgorithm):
             col = matrix[:, col_i]
             observed_entries = np.argwhere(~np.isnan(col)).flatten().astype(int)
             mat = X[observed_entries, :].T @ X[observed_entries, :]
-            mat += lambd * np.eye(k)
             b = X[observed_entries, :].T @ col[observed_entries]
             assert b.shape == (k,), b.shape
             assert mat.shape == (k, k), mat.shape
-            Y_new[Y.shape[0] + col_i, :] = np.linalg.solve(mat, b)
+            Y_new[Y.shape[0] + col_i, :] = np.linalg.lstsq(
+                mat, b, rcond=self.min_singular_value
+            )[0]
 
         self.tensor_cp_factors[1] = Y_new
         return Y_new

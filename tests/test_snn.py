@@ -164,7 +164,7 @@ def snn_model_partial_fit() -> SNN:
     is_first_batch = snn_test_df.time < "2020-02-01"
     df_first_batch = snn_test_df.loc[is_first_batch]
     df_second_batch = snn_test_df.loc[~is_first_batch]
-    model = SNN(verbose=False)
+    model = SNN(verbose=False, min_singular_value=1e-6)
     model.fit(
         df=df_first_batch,
         unit_column="unit_id",
@@ -615,6 +615,7 @@ def check_model_output(snn_model: SNN, snn_expected_query_output: pd.DataFrame):
         "ad 0",
         ["2020-01-10", " 2020-02-19"],
     )
+    # snn_expected_query_output.to_pickle("data/stores_sales_simple/snn_query_output_partial.pkl")
     assert snn_expected_query_output.round(5).equals(
         model_query_output.round(5)
     ), "Query output difference"
