@@ -16,7 +16,7 @@ from algorithms.base import WhatIFAlgorithm
 
 ModelTuple = namedtuple(
     "ModelTuple",
-    "actions_dict units_dict time_dict tensor_nans tensor_cp_factors true_intervention_assignment_matrix",
+    "actions_dict units_dict time_dict tensor_nans tensor_cp_factors true_intervention_assignment_matrix unit_column time_column actions metric",
 )
 
 
@@ -34,8 +34,8 @@ class FillTensorBase(WhatIFAlgorithm):
         self.metric: Optional[str] = None
         self.unit_column: Optional[str] = None
         self.time_column: Optional[str] = None
-        self.actions: Optional[List(str)] = None
-        self.covariates: Optional[List(str)] = None
+        self.actions: Optional[List[str]] = None
+        self.covariates: Optional[List[str]] = None
         self.true_intervention_assignment_matrix: Optional[ndarray] = None
 
     def check_model(self):
@@ -55,6 +55,15 @@ class FillTensorBase(WhatIFAlgorithm):
             raise ValueError(
                 f"self.true_intervention_assignment_matrix{error_message_base}"
             )
+        if self.unit_column is None:
+            raise ValueError(f"self.unit_column{error_message_base}")
+        if self.time_column is None:
+            raise ValueError(f"self.time_column{error_message_base}")
+        if self.actions is None:
+            raise ValueError(f"self.actions{error_message_base}")
+        if self.metric is None:
+            raise ValueError(f"self.metric{error_message_base}")
+
         return ModelTuple(
             self.actions_dict,
             self.units_dict,
@@ -62,6 +71,10 @@ class FillTensorBase(WhatIFAlgorithm):
             self.tensor_nans,
             self.tensor_cp_factors,
             self.true_intervention_assignment_matrix,
+            self.unit_column,
+            self.time_column,
+            self.actions,
+            self.metric,
         )
 
     @property
@@ -131,6 +144,9 @@ class FillTensorBase(WhatIFAlgorithm):
 
         # Only save the ALS output tensors
         self.tensor_cp_factors = als_model.cp_factors
+        assert (
+            self.tensor_cp_factors is not None
+        ), "self.tensor_cp_factors is None, check ALS model fit"
         self.tensor_cp_combined_action_unit_factors = self._merge_factors(
             self.tensor_cp_factors[0], self.tensor_cp_factors[2]
         )
@@ -192,7 +208,7 @@ class FillTensorBase(WhatIFAlgorithm):
 
     def _get_metric_matrix(
         self, df: pd.DataFrame, unit_column: str, time_column: str, metric: str
-    ) -> ndarray:
+    ) -> pd.DataFrame:
         metric_matrix_df = df.pivot(
             index=unit_column, columns=time_column, values=metric
         )
@@ -221,7 +237,7 @@ class FillTensorBase(WhatIFAlgorithm):
         time_column: str,
         metric: str,
         actions: List[str],
-    ) -> Tuple[ndarray, ndarray]:
+    ) -> Tuple[pd.DataFrame, ndarray]:
         # convert time to datetime column
         df[time_column] = pd.to_datetime(df[time_column])
 
@@ -238,17 +254,22 @@ class FillTensorBase(WhatIFAlgorithm):
         self,
         df: pd.DataFrame,
     ) -> ndarray:
+        model_tuple = self.check_model()
+        unit_column = model_tuple.unit_column
+        time_column = model_tuple.time_column
+        metric = model_tuple.metric
+        actions = model_tuple.actions
+        time_dict = model_tuple.time_dict
 
         (
             metric_matrix_df,
             current_true_intervention_assignment_matrix,
-        ) = self._process_input_df(
-            df, self.unit_column, self.time_column, self.metric, self.actions
-        )
-        timesteps = df[self.time_column].unique()
+        ) = self._process_input_df(df, unit_column, time_column, metric, actions)
+        timesteps = df[time_column].unique()
         T = len(timesteps)
-        max_t = max(list(self.time_dict.values()))
-        self.time_dict.update(
+
+        max_t = max(list(time_dict.values()))
+        time_dict.update(
             dict(zip(metric_matrix_df.columns, np.arange(max_t, max_t + T)))
         )
 
@@ -277,7 +298,7 @@ class FillTensorBase(WhatIFAlgorithm):
         time_column: str,
         actions: List[str],
         metrics: List[str],
-    ) -> Tuple[ndarray]:
+    ) -> ndarray:
 
         # populate actions dict
         list_of_actions = df[actions].drop_duplicates().agg("-".join, axis=1).values
@@ -349,8 +370,7 @@ class FillTensorBase(WhatIFAlgorithm):
         self,
         new_df: pd.DataFrame,
     ) -> None:
-        if self.tensor_cp_factors is None:
-            raise Exception("fit must be called before partial fit!")
+
         new_tensor = self._get_partial_tensor(new_df)
         new_time_factors = self.update_time_factors(new_tensor)
         # update nan mask
@@ -358,6 +378,9 @@ class FillTensorBase(WhatIFAlgorithm):
         #        1. if intervention/uni/time never observed --> nan (for all methods)
         #        2. if (time,intervention) never observed --> nan (for SNN)
         #        3. if (time,unit) never observed --> nan (for SNN)
+        assert (
+            self.tensor_nans is not None
+        ), "self.tensor_nans is None, have you called fit()?"
         old_shape = self.tensor_nans.shape
         self.tensor_nans.shape = (
             old_shape[0],
@@ -377,6 +400,10 @@ class FillTensorBase(WhatIFAlgorithm):
         Returns:
             ndarray: new time factors (new_timesteps x k)
         """
+        # check if self.tensor_cp_factors is not None
+        assert (
+            self.tensor_cp_factors is not None
+        ), "self.tensor_cp_factors, have you called fit()?"
 
         # transfrom tensor to matrix (NI X T)
         N, T, I = new_tensor.shape
@@ -458,6 +485,10 @@ class FillTensorBase(WhatIFAlgorithm):
                 model_tuple.tensor_cp_factors, dtype="object"
             ),
             "true_intervention_assignment_matrix": model_tuple.true_intervention_assignment_matrix,
+            "unit_column": model_tuple.unit_column,
+            "time_column": model_tuple.time_column,
+            "actions": model_tuple.actions,
+            "metric": model_tuple.metric,
             **{f"tensor_nans_{key}": value for key, value in tensor_nans_dict.items()},
         }
         return model_dict
@@ -491,6 +522,11 @@ class FillTensorBase(WhatIFAlgorithm):
         true_intervention_assignment_matrix = loaded_dict.pop(
             "true_intervention_assignment_matrix"
         )
+        unit_column = loaded_dict.pop("unit_column")
+        time_column = loaded_dict.pop("time_column")
+        actions = loaded_dict.pop("actions").tolist()
+        metric = loaded_dict.pop("metric")
+
         tensor_nans_prefix = "tensor_nans_"
         tensor_nans_dict = {
             key[len(tensor_nans_prefix) :]: value
@@ -503,6 +539,10 @@ class FillTensorBase(WhatIFAlgorithm):
         self.time_dict = time_dict
         self.tensor_cp_factors = tensor_cp_factors
         self.true_intervention_assignment_matrix = true_intervention_assignment_matrix
+        self.unit_column = unit_column
+        self.time_column = time_column
+        self.actions = actions
+        self.metric = metric
         self.tensor_nans = tensor_nans
         self.check_model()
 
