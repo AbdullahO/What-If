@@ -16,22 +16,29 @@ from algorithms.base import WhatIFAlgorithm
 
 ModelTuple = namedtuple(
     "ModelTuple",
-    "actions_dict units_dict time_dict tensor_nans tensor_cp_factors true_intervention_assignment_matrix",
+    "actions_dict units_dict time_dict tensor_nans tensor_cp_factors true_intervention_assignment_matrix unit_column time_column actions metric",
 )
 
 
 class FillTensorBase(WhatIFAlgorithm):
-    """Abstract class for all whatif algorithms that uses the tensor view"""
+    """Base class for all whatif algorithms that uses the tensor view"""
 
-    def __init__(self, verbose: Optional[bool] = False) -> None:
+    def __init__(
+        self, verbose: Optional[bool] = False, min_singular_value: float = 1e-7
+    ) -> None:
 
         self.verbose = verbose
+        self.min_singular_value = min_singular_value
         self.actions_dict: Optional[dict] = None
         self.units_dict: Optional[dict] = None
         self.time_dict: Optional[dict] = None
         self.tensor_nans: Optional[sparse.COO] = None
         self.tensor_cp_factors: Optional[List[tl.CPTensor]] = None
         self.metric: Optional[str] = None
+        self.unit_column: Optional[str] = None
+        self.time_column: Optional[str] = None
+        self.actions: Optional[List[str]] = None
+        self.covariates: Optional[List[str]] = None
         self.true_intervention_assignment_matrix: Optional[ndarray] = None
 
     def check_model(self):
@@ -51,6 +58,15 @@ class FillTensorBase(WhatIFAlgorithm):
             raise ValueError(
                 f"self.true_intervention_assignment_matrix{error_message_base}"
             )
+        if self.unit_column is None:
+            raise ValueError(f"self.unit_column{error_message_base}")
+        if self.time_column is None:
+            raise ValueError(f"self.time_column{error_message_base}")
+        if self.actions is None:
+            raise ValueError(f"self.actions{error_message_base}")
+        if self.metric is None:
+            raise ValueError(f"self.metric{error_message_base}")
+
         return ModelTuple(
             self.actions_dict,
             self.units_dict,
@@ -58,7 +74,35 @@ class FillTensorBase(WhatIFAlgorithm):
             self.tensor_nans,
             self.tensor_cp_factors,
             self.true_intervention_assignment_matrix,
+            self.unit_column,
+            self.time_column,
+            self.actions,
+            self.metric,
         )
+
+    @property
+    def T(self):
+        if self.time_dict:
+            _T = len(self.time_dict.values())
+            return _T
+        else:
+            return None
+
+    @property
+    def I(self):
+        if self.actions_dict:
+            _I = len(self.actions_dict.values())
+            return _I
+        else:
+            return None
+
+    @property
+    def N(self):
+        if self.units_dict:
+            _N = len(self.units_dict.values())
+            return _N
+        else:
+            return None
 
     def fit(
         self,
@@ -82,14 +126,13 @@ class FillTensorBase(WhatIFAlgorithm):
         """
         assert len(metrics) == 1, "method can only support single metric for now"
         self.metric = metrics[0]
-
-        # convert time to datetime column
-        df[time_column] = pd.to_datetime(df[time_column])
+        self.unit_column = unit_column
+        self.time_column = time_column
+        self.actions = actions
+        self.covariates = covariates
 
         # get tensor from df and labels
-        tensor, N, T, I = self._get_tensor(
-            df, unit_column, time_column, actions, metrics
-        )
+        tensor = self._get_tensor(df, unit_column, time_column, actions, metrics)
 
         # fill tensor
         tensor_filled = self._fit_transform(tensor)
@@ -104,6 +147,12 @@ class FillTensorBase(WhatIFAlgorithm):
 
         # Only save the ALS output tensors
         self.tensor_cp_factors = als_model.cp_factors
+        assert (
+            self.tensor_cp_factors is not None
+        ), "self.tensor_cp_factors is None, check ALS model fit"
+        self.tensor_cp_combined_action_unit_factors = self._merge_factors(
+            self.tensor_cp_factors[0], self.tensor_cp_factors[2]
+        )
 
     def query(
         self,
@@ -160,6 +209,91 @@ class FillTensorBase(WhatIFAlgorithm):
         out_df = pd.DataFrame(data=selected_matrix, index=units, columns=timesteps)
         return out_df
 
+    def _get_metric_matrix(
+        self, df: pd.DataFrame, unit_column: str, time_column: str, metric: str
+    ) -> pd.DataFrame:
+        metric_matrix_df = df.pivot(
+            index=unit_column, columns=time_column, values=metric
+        )
+        return metric_matrix_df
+
+    def _get_assignment_matrix(
+        self, df: pd.DataFrame, unit_column: str, time_column: str, actions: List[str]
+    ) -> ndarray:
+        # add the action_idx to each row
+        df["intervention_assignment"] = (
+            df[actions].agg("-".join, axis=1).map(self.actions_dict).values
+        )
+
+        # create assignment matrix
+        current_true_intervention_assignment_matrix = df.pivot(
+            index=unit_column,
+            columns=time_column,
+            values="intervention_assignment",
+        ).values
+        return current_true_intervention_assignment_matrix
+
+    def _process_input_df(
+        self,
+        df: pd.DataFrame,
+        unit_column: str,
+        time_column: str,
+        metric: str,
+        actions: List[str],
+    ) -> Tuple[pd.DataFrame, ndarray]:
+        # convert time to datetime column
+        df[time_column] = pd.to_datetime(df[time_column])
+
+        # get metric values in a (unit x time) matrix
+        metric_matrix_df = self._get_metric_matrix(df, unit_column, time_column, metric)
+
+        # get assignment (unit x time) matrix
+        current_true_intervention_assignment_matrix = self._get_assignment_matrix(
+            df, unit_column, time_column, actions
+        )
+        return metric_matrix_df, current_true_intervention_assignment_matrix
+
+    def _get_partial_tensor(
+        self,
+        df: pd.DataFrame,
+    ) -> ndarray:
+        model_tuple = self.check_model()
+        unit_column = model_tuple.unit_column
+        time_column = model_tuple.time_column
+        metric = model_tuple.metric
+        actions = model_tuple.actions
+        time_dict = model_tuple.time_dict
+
+        (
+            metric_matrix_df,
+            current_true_intervention_assignment_matrix,
+        ) = self._process_input_df(df, unit_column, time_column, metric, actions)
+        timesteps = df[time_column].unique()
+        T = len(timesteps)
+
+        max_t = max(list(time_dict.values()))
+        time_dict.update(
+            dict(zip(metric_matrix_df.columns, np.arange(max_t, max_t + T)))
+        )
+
+        ## TODO: potential storage issue, we're storing an N xT matrix that grows with T (and N).
+        self.true_intervention_assignment_matrix = np.concatenate(
+            [
+                self.true_intervention_assignment_matrix,
+                current_true_intervention_assignment_matrix,
+            ],
+            axis=1,
+        )
+
+        tensor = self._populate_tensor(
+            self.N,
+            T,
+            self.I,
+            metric_matrix_df,
+            current_true_intervention_assignment_matrix,
+        )
+        return tensor
+
     def _get_tensor(
         self,
         df: pd.DataFrame,
@@ -167,46 +301,54 @@ class FillTensorBase(WhatIFAlgorithm):
         time_column: str,
         actions: List[str],
         metrics: List[str],
-    ) -> Tuple[ndarray, int, int, int]:
-        units = df[unit_column].unique()
-        N = len(units)
-        timesteps = df[time_column].unique()
-        T = len(timesteps)
+    ) -> ndarray:
+
+        # populate actions dict
         list_of_actions = df[actions].drop_duplicates().agg("-".join, axis=1).values
         I = len(list_of_actions)
         self.actions_dict = dict(zip(list_of_actions, np.arange(I)))
 
-        # get tensor values
-        metric_matrix_df = df.pivot(
-            index=unit_column, columns=time_column, values=metrics[0]
-        )
+        (
+            metric_matrix_df,
+            current_true_intervention_assignment_matrix,
+        ) = self._process_input_df(df, unit_column, time_column, metrics[0], actions)
+
+        # populate units dict
+        units = df[unit_column].unique()
+        N = len(units)
         self.units_dict = dict(zip(metric_matrix_df.index, np.arange(N)))
+
+        # populate time dict
+        timesteps = df[time_column].unique()
+        T = len(timesteps)
         self.time_dict = dict(zip(metric_matrix_df.columns, np.arange(T)))
 
-        # add the action_idx to each row
-        df["intervention_assignment"] = (
-            df[actions].agg("-".join, axis=1).map(self.actions_dict).values
+        self.true_intervention_assignment_matrix = (
+            current_true_intervention_assignment_matrix
+        )
+        tensor = self._populate_tensor(
+            self.N,
+            T,
+            self.I,
+            metric_matrix_df,
+            current_true_intervention_assignment_matrix,
         )
 
-        # create assignment matrix
-        self.true_intervention_assignment_matrix = df.pivot(
-            index=unit_column, columns=time_column, values="intervention_assignment"
-        ).values
+        return tensor
 
+    @staticmethod
+    def _populate_tensor(N, T, I, metric_df, assignment_matrix):
         # init tensor
         tensor = np.full([N, T, I], np.nan)
 
         # fill tensor with metric_matrix values in appropriate locations
-        metric_matrix = metric_matrix_df.values
+        metric_matrix = metric_df.values
         for action_idx in range(I):
-            unit_time_received_action_idx = (
-                self.true_intervention_assignment_matrix == action_idx
-            )
+            unit_time_received_action_idx = assignment_matrix == action_idx
             tensor[unit_time_received_action_idx, action_idx] = metric_matrix[
                 unit_time_received_action_idx
             ]
-
-        return tensor, N, T, I
+        return tensor
 
     def get_tensor_from_factors(
         self,
@@ -226,6 +368,66 @@ class FillTensorBase(WhatIFAlgorithm):
             mask = tensor_nans.todense()
             tensor[mask] = np.nan
         return tensor
+
+    def partial_fit(
+        self,
+        new_df: pd.DataFrame,
+    ) -> None:
+
+        new_tensor = self._get_partial_tensor(new_df)
+        new_time_factors = self.update_time_factors(new_tensor)
+        # update nan mask
+        ## TODO: update nan mask based on original fit:
+        #        1. if intervention/uni/time never observed --> nan (for all methods)
+        #        2. if (time,intervention) never observed --> nan (for SNN)
+        #        3. if (time,unit) never observed --> nan (for SNN)
+        assert (
+            self.tensor_nans is not None
+        ), "self.tensor_nans is None, have you called fit()?"
+        old_shape = self.tensor_nans.shape
+        self.tensor_nans.shape = (
+            old_shape[0],
+            new_time_factors.shape[0],
+            old_shape[2],
+        )
+
+    def update_time_factors(self, new_tensor: ndarray) -> ndarray:
+        """update time factors using the new observations in new tensor ([N x new_timesteps x I])
+
+        Args:
+            new_tensor (ndarray): new tensor that correspond to new obseravations
+
+        Returns:
+            ndarray: new time factors (new_timesteps x k)
+        """
+        # check if self.tensor_cp_factors is not None
+        assert (
+            self.tensor_cp_factors is not None
+        ), "self.tensor_cp_factors, have you called fit()?"
+
+        # transfrom tensor to matrix (NI X T)
+        N, T, I = new_tensor.shape
+        matrix = new_tensor.transpose([2, 0, 1]).reshape([N * I, T])
+
+        # update factors based on new columns
+        Y = self.tensor_cp_factors[1]
+        X = self.tensor_cp_combined_action_unit_factors
+        k = Y.shape[1]
+        Y_new = np.zeros([Y.shape[0] + matrix.shape[1], k])
+        Y_new[: Y.shape[0], :] = Y
+        for col_i in range(matrix.shape[1]):
+            col = matrix[:, col_i]
+            observed_entries = np.argwhere(~np.isnan(col)).flatten().astype(int)
+            mat = X[observed_entries, :].T @ X[observed_entries, :]
+            b = X[observed_entries, :].T @ col[observed_entries]
+            assert b.shape == (k,), b.shape
+            assert mat.shape == (k, k), mat.shape
+            Y_new[Y.shape[0] + col_i, :] = np.linalg.lstsq(
+                mat, b, rcond=self.min_singular_value
+            )[0]
+
+        self.tensor_cp_factors[1] = Y_new
+        return Y_new
 
     @abstractmethod
     def _fit_transform(self, Y: ndarray) -> ndarray:
@@ -284,6 +486,10 @@ class FillTensorBase(WhatIFAlgorithm):
                 model_tuple.tensor_cp_factors, dtype="object"
             ),
             "true_intervention_assignment_matrix": model_tuple.true_intervention_assignment_matrix,
+            "unit_column": model_tuple.unit_column,
+            "time_column": model_tuple.time_column,
+            "actions": model_tuple.actions,
+            "metric": model_tuple.metric,
             **{f"tensor_nans_{key}": value for key, value in tensor_nans_dict.items()},
         }
         return model_dict
@@ -317,6 +523,11 @@ class FillTensorBase(WhatIFAlgorithm):
         true_intervention_assignment_matrix = loaded_dict.pop(
             "true_intervention_assignment_matrix"
         )
+        unit_column = loaded_dict.pop("unit_column")
+        time_column = loaded_dict.pop("time_column")
+        actions = loaded_dict.pop("actions").tolist()
+        metric = loaded_dict.pop("metric")
+
         tensor_nans_prefix = "tensor_nans_"
         tensor_nans_dict = {
             key[len(tensor_nans_prefix) :]: value
@@ -329,6 +540,10 @@ class FillTensorBase(WhatIFAlgorithm):
         self.time_dict = time_dict
         self.tensor_cp_factors = tensor_cp_factors
         self.true_intervention_assignment_matrix = true_intervention_assignment_matrix
+        self.unit_column = unit_column
+        self.time_column = time_column
+        self.actions = actions
+        self.metric = metric
         self.tensor_nans = tensor_nans
         self.check_model()
 
@@ -373,3 +588,13 @@ class FillTensorBase(WhatIFAlgorithm):
             X = X.astype(float)
         self._check_input_matrix(X, missing_mask, ndim)
         return X
+
+    def _merge_factors(self, X, Y):
+        assert X.shape[1] == Y.shape[1]
+        k = X.shape[1]
+        n = Y.shape[0]
+        m = X.shape[0]
+        vw = np.zeros([m * n, k])
+        for i in range(n):
+            vw[i * m : (i + 1) * m, :] = Y[i, :] * X
+        return vw

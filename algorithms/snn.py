@@ -3,12 +3,9 @@ Synthetic Nearest Neighbors algorithm:
 Refactoring the code in https://github.com/deshen24/syntheticNN
 """
 import sys
-import warnings
-from typing import Any, Iterator, List, Optional, Tuple
-
+from typing import Any, Iterator, Optional, Tuple
 import networkx as nx
 import numpy as np
-import sparse
 from cachetools import cached
 from cachetools.keys import hashkey
 from networkx.algorithms.clique import find_cliques  # type: ignore
@@ -73,7 +70,7 @@ class SNN(FillTensorBase):
 
         verbose : bool
         """
-        super().__init__(verbose=verbose)
+        super().__init__(verbose=verbose, min_singular_value=min_singular_value)
         self.n_neighbors = n_neighbors
         self.weights = weights
         self.random_splits = random_splits
@@ -83,7 +80,6 @@ class SNN(FillTensorBase):
         self.subspace_eps = subspace_eps
         self.min_value = min_value
         self.max_value = max_value
-        self.min_singular_value = min_singular_value
 
     def diagnostics(self):
         """returns method-specifc diagnostics"""
@@ -172,7 +168,6 @@ class SNN(FillTensorBase):
         """
         (missing_row, missing_col) = missing_pair
 
-        # TODO: instead of n^2 times, we can find these in 2*n (more storage)
         obs_rows = frozenset(np.argwhere(~np.isnan(X[:, missing_col])).flatten())
         obs_cols = frozenset(np.argwhere(~np.isnan(X[missing_row, :])).flatten())
         return self._get_anchors(X, obs_rows, obs_cols)
