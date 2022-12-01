@@ -308,16 +308,30 @@ class FillTensorBase(WhatIFAlgorithm):
         I = len(list_of_actions)
         self.actions_dict = dict(zip(list_of_actions, np.arange(I)))
 
-        # get tensor values
-        metric_matrix_df = df.pivot(
-            index=unit_column, columns=time_column, values=metrics[0]
-        )
+        (
+            metric_matrix_df,
+            current_true_intervention_assignment_matrix,
+        ) = self._process_input_df(df, unit_column, time_column, metrics[0], actions)
+
+        # populate units dict
+        units = df[unit_column].unique()
+        N = len(units)
         self.units_dict = dict(zip(metric_matrix_df.index, np.arange(N)))
+
+        # populate time dict
+        timesteps = df[time_column].unique()
+        T = len(timesteps)
         self.time_dict = dict(zip(metric_matrix_df.columns, np.arange(T)))
 
-        # add the action_idx to each row
-        df["intervention_assignment"] = (
-            df[actions].agg("-".join, axis=1).map(self.actions_dict).values
+        self.true_intervention_assignment_matrix = (
+            current_true_intervention_assignment_matrix
+        )
+        tensor = self._populate_tensor(
+            self.N,
+            T,
+            self.I,
+            metric_matrix_df,
+            current_true_intervention_assignment_matrix,
         )
 
         return tensor
