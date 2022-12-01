@@ -164,7 +164,7 @@ def snn_model_partial_fit() -> SNN:
     is_first_batch = snn_test_df.time < "2020-02-01"
     df_first_batch = snn_test_df.loc[is_first_batch]
     df_second_batch = snn_test_df.loc[~is_first_batch]
-    model = SNN(verbose=False, min_singular_value=1e-7)
+    model = SNN(verbose=False, min_singular_value=1e-6)
     model.fit(
         df=df_first_batch,
         unit_column="unit_id",
@@ -186,10 +186,8 @@ def snn_model_matrix(snn_model: SNN) -> ndarray:
     # convert time to datetime column
     df[time_column] = pd.to_datetime(df[time_column])
     # get tensor and dimensions
-    tensor, N, T, I = snn_model._get_tensor(
-        df, unit_column, time_column, actions, metrics
-    )
-    matrix = tensor.reshape([N, I * T])
+    tensor = snn_model._get_tensor(df, unit_column, time_column, actions, metrics)
+    matrix = tensor.reshape([snn_model.N, snn_model.I * snn_model.T])
     return matrix
 
 
@@ -267,10 +265,10 @@ def test_split(snn_model: SNN, expected_anchor_rows: ndarray, k: int):
 
 def test_model_str(snn_model: SNN):
     assert str(snn_model) == (
-        "SNN(linear_span_eps=0.1, max_rank=None, max_value=None,"
+        "SNN(covariates=None, linear_span_eps=0.1, max_rank=None, max_value=None,"
         " metric='sales', min_singular_value=1e-07, min_value=None,"
         " n_neighbors=1, random_splits=False, spectral_t=None, subspace_eps=0.1,"
-        " verbose=False, weights='uniform')"
+        " time_column='time', unit_column='unit_id', verbose=False, weights='uniform')"
     )
 
 
@@ -516,15 +514,15 @@ def get_new_snn_model_pre_fit() -> Tuple:
     # convert time to datetime column
     df[time_column] = pd.to_datetime(df[time_column])
     # get tensor and dimensions
-    tensor, N, T, I = model._get_tensor(df, unit_column, time_column, actions, metrics)
-    return df, model, tensor, N, T, I
+    tensor = model._get_tensor(df, unit_column, time_column, actions, metrics)
+    return df, model, tensor
 
 
 def test_get_tensor(snn_model_matrix: ndarray):
     """Test the _get_tensor function"""
     # Don't use snn_model fixture here
-    _df, _model, tensor, N, T, I = get_new_snn_model_pre_fit()
-    matrix = tensor.reshape([N, I * T])
+    _df, _model, tensor = get_new_snn_model_pre_fit()
+    matrix = tensor.reshape([_model.N, _model.I * _model.T])
     error_message = "_get_tensor matrix output not as expected"
     assert np.allclose(matrix, snn_model_matrix, equal_nan=True), error_message
 
@@ -532,10 +530,10 @@ def test_get_tensor(snn_model_matrix: ndarray):
 def test_fit_transform(snn_model_matrix_full: ndarray, snn_model_matrix: ndarray):
     """Test the _fit_transform function"""
     # Don't use snn_model fixture here
-    df, model, tensor, N, T, I = get_new_snn_model_pre_fit()
+    df, model, tensor = get_new_snn_model_pre_fit()
 
     # tensor to matrix
-    matrix = tensor.reshape([N, I * T])
+    matrix = tensor.reshape([model.N, model.I * model.T])
     error_message = "_get_tensor matrix output not as expected"
     assert np.allclose(matrix, snn_model_matrix, equal_nan=True), error_message
     snn_imputed_matrix = model._snn_fit_transform(matrix)
@@ -543,7 +541,7 @@ def test_fit_transform(snn_model_matrix_full: ndarray, snn_model_matrix: ndarray
     assert snn_imputed_matrix.shape == (100, 50 * 3), error_message
 
     # Check that we get the same ALS output
-    snn_imputed_tensor = snn_imputed_matrix.reshape([N, T, I])
+    snn_imputed_tensor = snn_imputed_matrix.reshape([model.N, model.T, model.I])
     assert snn_imputed_tensor.shape == (100, 50, 3), error_message
 
     nans_mask = np.isnan(snn_imputed_tensor)
@@ -553,7 +551,7 @@ def test_fit_transform(snn_model_matrix_full: ndarray, snn_model_matrix: ndarray
     # Reconstructs tensor from CP form, all values now filled
     als_tensor = als_model.predict()
     als_tensor[nans_mask] = np.nan
-    matrix_full = als_tensor.reshape([N, I * T])
+    matrix_full = als_tensor.reshape([model.N, model.I * model.T])
 
     error_message = "_snn_fit_transform output not as expected"
     assert np.allclose(
@@ -617,7 +615,6 @@ def check_model_output(snn_model: SNN, snn_expected_query_output: pd.DataFrame):
         "ad 0",
         ["2020-01-10", " 2020-02-19"],
     )
-
     # snn_expected_query_output.to_pickle("data/stores_sales_simple/snn_query_output_partial.pkl")
     assert snn_expected_query_output.round(5).equals(
         model_query_output.round(5)
@@ -627,11 +624,18 @@ def check_model_output(snn_model: SNN, snn_expected_query_output: pd.DataFrame):
         "ad 0": 1,
         "ad 1": 2,
     }, "Actions dict difference"
+
     return model_query_output
 
 
 def test_fit(snn_model: SNN, snn_expected_query_output: pd.DataFrame):
     check_model_output(snn_model, snn_expected_query_output)
+
+
+def test_partial_fit(
+    snn_model_partial_fit: SNN, snn_expected_query_output_partial: pd.DataFrame
+):
+    check_model_output(snn_model_partial_fit, snn_expected_query_output_partial)
 
 
 def test_save_load_binary(snn_model: SNN, snn_expected_query_output: pd.DataFrame):
