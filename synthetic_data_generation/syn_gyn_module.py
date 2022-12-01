@@ -227,19 +227,20 @@ class SyntheticDataModule:
     def __init__(
         self,
         num_units: int,
-        num_timesteps: int,
+        max_timesteps: int,
         num_interventions: int,
         metrics: List[Metric],
         unit_cov: Optional[list] = None,
         int_cov: Optional[list] = None,
         rank: Optional[int] = 2,
         freq: Optional[str] = None,
+        start: Optional[pd.Timestamp] = pd.Timestamp("01/01/2020 00:00"),
     ) -> None:
         """_summary_
 
         Args:
             num_units (int): number of units in your data
-            num_timesteps (int): number of timesteps in your data
+            max_timesteps (int): number of maximum timesteps you will generate in your data
             num_interventions (int): number of interventions
             metrics (List[Metric]): list of metrics
             unit_cov (List[UnitCov], optional): list of unit covaraites. Defaults to None.
@@ -248,14 +249,12 @@ class SyntheticDataModule:
             freq (str, optional): frequency of the time steps. If none, integers would be used. Defaults to None.
         """
         self.num_units = num_units
-        self.num_timesteps = num_timesteps
+        self.max_timesteps = max_timesteps
         self.num_interventions = num_interventions
         self.num_metrics = len(metrics)
         self.metrics = metrics
-        self.effects: List[Any] = []
-        self.tensor = None
+        self.effects = []
         self.freq = freq
-        self.df = None
         self.factors = None
         self.U, self.T, self.I, self.M = (None, None, None, None)
         self.metric_columns = None
@@ -268,21 +267,29 @@ class SyntheticDataModule:
         self.metrics_range = [metric.range for metric in metrics]
         self.assignments_labels = None
         self.assignments = None
-        self.subpopulations: List[Any] = []
-        self.subpopulations_funcs: List[Any] = []
+        self.subpopulations = []
+        self.subpopulations_funcs = []
+        self.tensor_min = 0
+        self.tensor_max = 0
+        self.trend_coeff = None
+        self.time_factor_periods = None
+        self.time_factor_har_amps = None
+        self.time_factor_har_shifts = None
+        self.poly_coeff = None
+        self.start = start
 
-    def generate(
+    def generate_init_factors(
         self,
         max_periods=50,
         max_amp_har=1,
         min_amp_har=-1,
         periodic=True,
-        lin_tren=True,
+        lin_tren=False,
         trend_coeff=None,
-        poly_trend=True,
+        poly_trend=False,
         poly_coeff=None,
     ):
-        tensor, factors = self._generate_tensor(
+        self._generate_factors(
             max_periods,
             max_amp_har,
             min_amp_har,
@@ -292,63 +299,85 @@ class SyntheticDataModule:
             poly_trend,
             poly_coeff,
         )
-        self.tensor = tensor
-        self.factors = factors
-        self.U, self.T, self.I, self.M = factors
-        self._init_df()
+        self.factors = self.U, self.T, self.I, self.M
+
         if self.int_cov:
-            self._add_intervention_covs()
+            self._init_intervention_covs()
         if self.unit_cov:
-            self._add_unit_covs()
-        self._add_metrics()
+            self._init_unit_covs()
 
     def add_effects(self, effects):
         """_summary_
 
         Args:
-            effects (_type_): _description_
+            effects (list): _description_
         """
-        # add effects
         self.effects += effects
-        for effect in effects:
+
+    def generate(self, time_range):
+        t0, t1 = time_range
+        # construct tensor
+        tensor = tl.cp_to_tensor(
+            (np.ones(self.rank), [self.U, self.T[t0 : t1 + 1, :], self.I, self.M])
+        )
+
+        # Adjust metric ranges
+        if self.metrics_range is not None:
+            for m in range(self.num_metrics):
+                min_, max_ = self.metrics_range[m]
+                tensor[:, :, :, m] -= self.tensor_min
+                tensor[:, :, :, m] /= self.tensor_max
+                tensor[:, :, :, m] *= max_ - min_
+                tensor[:, :, :, m] += min_
+
+        df = self._init_df(t0, t1)
+        if self.int_cov:
+            df = self._add_unit_cov(df)
+        if self.unit_cov:
+            df = self._generate_int_cov(df)
+        tensor = self.genereate_effects(tensor)
+        df = self._add_metrics(df, tensor)
+        return tensor, df
+
+    def genereate_effects(self, tensor):
+        for effect in self.effects:
             metric = effect["metric"]
             intervention_number = effect["intervention"]
             subpopulation = effect["subpop"]
             effect_size = effect["effect"]
             if subpopulation is None:
-                subpopulation = np.ones(self.tensor.shape[0]).astype(bool)
+                subpopulation = np.ones(self.U.shape[0]).astype(bool)
             else:
                 subpopulation = subpopulation()
             metric_index = self.metrics.index(metric)
-            control = self.tensor[subpopulation, :, 0, metric_index].mean()
-            c_eff_size = self.tensor[
+            control = tensor[subpopulation, :, 0, metric_index].mean(0)
+            c_eff_size = tensor[
                 subpopulation, :, intervention_number, metric_index
-            ].mean()
-            self.tensor[
+            ].mean(0)
+            tensor[
                 subpopulation, :, intervention_number, metric_index
             ] += effect_size * control - (c_eff_size - control)
             noise = (
-                0.00
-                * control
+                0.01
+                * tensor.mean()
                 * np.random.normal(
-                    size=self.tensor[
+                    size=tensor[
                         subpopulation, :, intervention_number, metric_index
                     ].shape
                 )
             )
-            self.tensor[subpopulation, :, intervention_number, metric_index] += noise
+            tensor[subpopulation, :, intervention_number, metric_index] += noise
+        return tensor
 
-        # reload metrics
-        self._add_metrics()
-
-    def auto_subsample(self, periods):
+    def auto_subsample(self, periods, tensor, df):
 
         """
         return intervention assignments (num_units x num_timesteps) and mask for
         observations (num_units x num_timesteps) then use sample to generate df_ss and tesnor_ss
         """
-        int_idx = np.zeros([self.num_units, self.num_timesteps]).astype(int)
-        obs_idx = np.zeros([self.num_units, self.num_timesteps]).astype(bool)
+        T = tensor.shape[1]
+        int_idx = np.zeros([self.num_units, T]).astype(int)
+        obs_idx = np.zeros([self.num_units, T]).astype(bool)
         start = 0
 
         for period in periods:
@@ -357,8 +386,8 @@ class SyntheticDataModule:
                 until > start
             ), f"value for until should be greater than that of previous periods; {until} is less than {start}"
             assert (
-                until <= self.num_timesteps
-            ), f"value for until should be less than or equal to total number of time steps; {until} is greater than {self.num_timesteps}"
+                until <= T
+            ), f"value for until should be less than or equal to total number of time steps; {until} is greater than {T}"
 
             assignment = period["intervention_assignment"]
             if "assignment_subpop" in period:
@@ -384,40 +413,37 @@ class SyntheticDataModule:
             )  # subsample observations
             start = until
 
-        self.ss_tensor, self.ss_df = self.sample(int_idx, obs_idx)
+        ss_tensor, ss_df = self.sample(int_idx, obs_idx, tensor, df)
+        return ss_tensor, ss_df
 
-    def sample(self, intervention_assignments, observation_mask):
+    def sample(self, intervention_assignments, observation_mask, tensor, df):
 
         intervention_assignments = intervention_assignments.flatten()
-
+        T = tensor.shape[1]
         # subsample tensor intervention
-        mesh = np.array(
-            np.meshgrid(np.arange(self.num_units), np.arange(self.num_timesteps))
-        )
+        mesh = np.array(np.meshgrid(np.arange(self.num_units), np.arange(T)))
         combinations = mesh.T.reshape(-1, 2)
-        self.mask = np.full(self.tensor.shape, 0)
+        self.mask = np.full(tensor.shape, 0)
         self.mask[
             combinations[:, 0], combinations[:, 1], intervention_assignments, :
         ] = 1
-        subsampled_tensor = self.tensor[
+        subsampled_tensor = tensor[
             combinations[:, 0], combinations[:, 1], intervention_assignments, :
-        ].reshape(self.num_units, self.num_timesteps, self.num_metrics)
+        ].reshape(self.num_units, T, self.num_metrics)
         subsampled_tensor[observation_mask] = np.nan
 
         # subsample df
-        df_copy = self.df.copy()
+        df_copy = df.copy()
         df_copy["intervention"] = intervention_assignments
 
         # select metric column according to intervention_assignments
         for i, metric_list in enumerate(self.metric_columns):
             metric_matrix = df_copy.sort_values(["unit_id", "time"])[metric_list].values
             chosen_metric = metric_matrix[
-                np.arange(self.df.shape[0]), intervention_assignments
+                np.arange(df.shape[0]), intervention_assignments
             ]
             if self.metrics[i].difference_metric:
-                chosen_metric = chosen_metric.reshape(
-                    [self.num_units, self.num_timesteps]
-                )
+                chosen_metric = chosen_metric.reshape([self.num_units, T])
                 chosen_metric = (
                     chosen_metric.cumsum(axis=1) + self.metrics[i].init_values
                 )
@@ -436,7 +462,7 @@ class SyntheticDataModule:
             for i, intervention_list in enumerate(self.intervention_columns):
                 int_matrix = df_copy[intervention_list].values
                 chosen_cov = int_matrix[
-                    np.arange(self.df.shape[0]), intervention_assignments
+                    np.arange(df.shape[0]), intervention_assignments
                 ]
                 df_copy[self.int_cov[i].name] = chosen_cov
                 df_copy = df_copy.drop(intervention_list, axis="columns")
@@ -519,32 +545,38 @@ class SyntheticDataModule:
             )
         return idx
 
-    def _init_df(self):
+    def _init_df(self, t0, t1):
         """initialise df with unit and time columns"""
-        self.df = pd.DataFrame(columns=["unit_id", "time"])
+        df = pd.DataFrame(columns=["unit_id", "time"])
         if self.freq is not None:
+            td = pd.to_timedelta(self.freq)
             time = pd.date_range(
-                start=pd.Timestamp("01/01/2020 00:00"),
+                start=self.start + td * t0,
                 freq=self.freq,
-                periods=self.num_timesteps,
+                periods=t1 - t0 + 1,
             )
         else:
-            time = np.arange(self.num_timesteps)
+            time = np.arange(t0, t1 + 1)
 
         # populate unit and time
         mesh = np.array(np.meshgrid(np.arange(self.num_units), time))
         combinations = mesh.T.reshape(-1, 2)
-        self.df["unit_id"] = combinations[:, 0]
-        self.df["time"] = combinations[:, 1]
+        df["unit_id"] = combinations[:, 0]
+        df["time"] = combinations[:, 1]
         if self.freq is not None:
-            self.df["time"] = pd.to_datetime(self.df["time"])
-        self.df = self.df.sort_values(["unit_id", "time"])
+            df["time"] = pd.to_datetime(df["time"])
+        df = df.sort_values(["unit_id", "time"])
 
-    def _add_intervention_covs(self):
+        return df
+
+    def _init_intervention_covs(self):
         no_int_cov = len(self.int_cov)
-        cov_names = [cov.name for cov in self.int_cov]
         self.intervention_columns = [list() for _ in range(no_int_cov)]
         no_interventions, _ = self.I.shape
+
+        ## assign interventions to divisions
+        ## e.g., if int_cov is discrete and \in {0,1}, the corresponding column in the assignment
+        # matrix tells us which intervention maps to which cov value.
         assignment = np.zeros([no_interventions, no_int_cov]).astype(int)
         while np.unique(assignment, axis=0).shape[0] < no_interventions:
             no_divisions = [cov.divisions for cov in self.int_cov]
@@ -560,27 +592,8 @@ class SyntheticDataModule:
                     assignment[:, cov] = self.int_cov[cov].assignment
         self.assignments = assignment
         self.assignments_labels = np.zeros_like(assignment).astype("object")
-        for c_i, cov in enumerate(self.int_cov):
-            divisions = cov.divisions_threshold
-            cont = not cov.discrete
-            for i in range(no_interventions):
-                div = assignment[i, c_i]
-                if cont:
-                    intervention_cov_range = [divisions[div], divisions[div + 1]]
-                    self.df[f"{cov_names[c_i]}_{i}"] = np.random.uniform(
-                        low=intervention_cov_range[0],
-                        high=intervention_cov_range[1],
-                        size=self.df.shape[0],
-                    )
-                else:
-                    self.df[f"{cov_names[c_i]}_{i}"] = np.random.choice(
-                        cov.division_categories[div], size=self.df.shape[0]
-                    )
-                self.intervention_columns[c_i].append(f"{cov_names[c_i]}_{i}")
-            dict_ = dict(zip(np.arange(cov.divisions), cov.divisions_labels))
-            self.assignments_labels[:, c_i] = np.vectorize(dict_.__getitem__)(
-                self.assignments[:, c_i]
-            )
+
+        # add actions labels
         self.actions = []
         for i in range(no_interventions):
             action = {"name": f"action_{i}", "id": i, "conditions": []}
@@ -600,11 +613,38 @@ class SyntheticDataModule:
                 action["conditions"].append(cond)
             self.actions.append(action)
 
-    def _add_unit_covs(self):
-        no_units, rank = self.U.shape
-        cov_names = [cov.name for cov in self.unit_cov]
-        # return no_covs discrete unit covariates
-        for c_i, cov in enumerate(self.unit_cov):
+    def _generate_int_cov(self, df):
+        # generate interventions covariates
+        no_interventions = self.I.shape[0]
+        cov_names = [cov.name for cov in self.int_cov]
+
+        for c_i, cov in enumerate(self.int_cov):
+            divisions = cov.divisions_threshold
+            cont = not cov.discrete
+            for i in range(no_interventions):
+                div = self.assignments[i, c_i]
+                if cont:
+                    intervention_cov_range = [divisions[div], divisions[div + 1]]
+                    df[f"{cov_names[c_i]}_{i}"] = np.random.uniform(
+                        low=intervention_cov_range[0],
+                        high=intervention_cov_range[1],
+                        size=df.shape[0],
+                    )
+                else:
+                    df[f"{cov_names[c_i]}_{i}"] = np.random.choice(
+                        cov.division_categories[div], size=df.shape[0]
+                    )
+                self.intervention_columns[c_i].append(f"{cov_names[c_i]}_{i}")
+            dict_ = dict(zip(np.arange(cov.divisions), cov.divisions_labels))
+            self.assignments_labels[:, c_i] = np.vectorize(dict_.__getitem__)(
+                self.assignments[:, c_i]
+            )
+        return df
+
+    def _init_unit_covs(self):
+        _, rank = self.U.shape
+
+        for cov in self.unit_cov:
             i = np.random.randint(2) + 1
             rs = np.random.choice(np.arange(rank), size=i, replace=False)
             X = self.U[:, rs]
@@ -613,7 +653,6 @@ class SyntheticDataModule:
                 kmeans = KMeans(n_clusters=n_c, random_state=0).fit(X)
                 labels = dict(zip(np.arange(n_c), cov.categories))
                 categories_label = np.vectorize(labels.__getitem__)(kmeans.labels_)
-                dict_labels = dict(zip(np.arange(no_units), categories_label))
                 cov.unit_labels = categories_label
             else:
                 beta = np.random.random([i, 1])
@@ -622,11 +661,17 @@ class SyntheticDataModule:
                 labels /= labels.max()
                 labels *= cov.range[1] - cov.range[0]
                 labels += cov.range[0]
-                dict_labels = dict(zip(np.arange(no_units), labels[:, 0]))
                 cov.unit_labels = labels[:, 0]
-            self.df[f"{cov_names[c_i]}"] = self.df["unit_id"].map(dict_labels)
 
-    def _add_metrics(self):
+    def _add_unit_cov(self, df):
+        no_units, _ = self.U.shape
+        cov_names = [cov.name for cov in self.unit_cov]
+        for c_i, cov in enumerate(self.unit_cov):
+            dict_labels = dict(zip(np.arange(no_units), cov.unit_labels))
+            df[f"{cov_names[c_i]}"] = df["unit_id"].map(dict_labels)
+        return df
+
+    def _add_metrics(self, df, tensor):
         self.metric_columns = [list() for _ in range(self.num_metrics)]
         # populate metrics
         for m, metric in enumerate(self.metrics):
@@ -634,17 +679,16 @@ class SyntheticDataModule:
             if metric.difference_metric:
                 change_str = "_change"
             for i in range(self.num_interventions):
-                self.df[f"{metric.name}{change_str}_{str(i)}"] = self.tensor[
-                    :, :, i, m
-                ].flatten()
+                df[f"{metric.name}{change_str}_{str(i)}"] = tensor[:, :, i, m].flatten()
                 self.metric_columns[m].append(f"{metric.name}{change_str}_{str(i)}")
             if metric.difference_metric and metric.init_values is None:
                 min_, max_ = metric.init_values_range
                 metric.init_values = (
                     np.random.random(size=(self.num_units, 1)) * (max_ - min_) + min_
                 )
+        return df
 
-    def _generate_tensor(
+    def _generate_factors(
         self,
         max_periods=50,
         max_amp_har=1,
@@ -656,61 +700,63 @@ class SyntheticDataModule:
         poly_coeff=None,
     ):
         # Generate factors
-        U = np.random.random([self.num_units, self.rank])
-        T = np.random.random([self.num_timesteps, self.rank]) - 0.5
-        for r in range(self.rank):
-            periods = np.random.random() * max_periods
-            amp = np.random.random() * (max_amp_har - min_amp_har) + min_amp_har
-            shift = np.random.random() * np.pi
-            if periodic:
-                T[:, r] += amp * np.sin(
-                    shift
-                    + periods * np.arange(self.num_timesteps) / (self.num_timesteps)
+        self.U = np.random.random([self.num_units, self.rank])
+        self.T = np.random.random([self.max_timesteps, self.rank]) - 0.5
+        self.I = np.random.random([self.num_interventions, self.rank])
+        self.M = np.random.random([self.num_metrics, self.rank])
+
+        # generate temporal factors
+        if periodic:
+            self.time_factor_periods = 1 / (np.random.random(self.rank) * max_periods)
+            self.time_factor_har_amps = (
+                np.random.random(self.rank) * (max_amp_har - min_amp_har) + min_amp_har
+            )
+            self.time_factor_har_shifts = np.random.random(self.rank) * np.pi
+            for r in range(self.rank):
+                self.tensor_max += self.time_factor_har_amps[r] + 0.5
+                self.T[:, r] += self.time_factor_har_amps[r] * np.sin(
+                    self.time_factor_har_shifts[r]
+                    + 2
+                    * np.pi
+                    * self.time_factor_periods[r]
+                    * np.arange(self.max_timesteps)
+                    / (self.max_timesteps)
                 )
-            if lin_tren:
-                if trend_coeff is None:
-                    trend_coeff = 0.05 * (np.random.random() - 0.5) / self.num_timesteps
-                T[:, r] += trend_coeff * np.arange(self.num_timesteps)
-            if poly_trend:
-                if poly_coeff is None:
-                    poly_coeff = (
-                        5 * (np.random.random() - 0.5) / (self.num_timesteps**2)
-                    )
-                T[:, r] += poly_coeff * np.arange(self.num_timesteps) ** 2
-        I = np.random.random([self.num_interventions, self.rank])
-        M = np.random.random([self.num_metrics, self.rank])
-        # construct tensor
-        tensor = tl.cp_to_tensor((np.ones(self.rank), [U, T, I, M]))
+        if lin_tren:
+            if trend_coeff is None:
+                trend_coeff = (
+                    0.05 * (np.random.random(self.rank) - 0.5) / self.max_timesteps
+                )
+            self.trend_coeff = trend_coeff
+            for r in range(self.rank):
+                self.T[:, r] += self.trend_coeff * np.arange(self.max_timesteps)
+        if poly_trend:
+            if poly_coeff is None:
+                poly_coeff = (
+                    5 * (np.random.random(self.rank) - 0.5) / (self.max_timesteps**2)
+                )
+            self.poly_coeff = poly_coeff
+            self.T[:, r] += self.trend_coeff * np.arange(self.max_timesteps) ** 2
+        self.tensor_max = np.abs(self.T).max()
+        self.tensor_max = tl.cp_to_tensor(
+            (
+                np.ones(self.rank),
+                [self.U, self.tensor_max * np.ones([1, self.rank]), self.I, self.M],
+            )
+        ).max()
+        self.tensor_min = -1 * self.tensor_max
 
-        # Adjust metric ranges
-        if self.metrics_range is not None:
-            for m in range(self.num_metrics):
-                min_, max_ = self.metrics_range[m]
-                tensor[:, :, :, m] -= tensor[:, :, :, m].min()
-                tensor[:, :, :, m] /= tensor[:, :, :, m].max()
-                tensor[:, :, :, m] *= max_ - min_
-                tensor[:, :, :, m] += min_
-
-        return tensor, (U, T, I, M)
-
-    def export(self, name, dir=""):
+    def export(self, name, tensor, ss_df, dir=""):
         # create dir
         path = os.path.join(dir, name)
         if not os.path.exists(path):
             os.makedirs(path)
 
         # save subsampled df
-        self.ss_df.drop("intervention", axis="columns").round(ROUND_FLOAT).to_csv(
+        ss_df.drop("intervention", axis="columns").round(ROUND_FLOAT).to_csv(
             f"{path}/{name}.csv", index=False
         )
 
-        # save actions and subpopulations
-        with open(f"{path}/actions.csv", "w+") as of:
-            for action in self.actions:
-                of.write(
-                    f"""{action['name']},{action['id']}, {name}, "{json.dumps(action['conditions']).replace('"', '""')}"\n"""
-                )
-
         # save tensor as npy
-        np.save(f"{path}/tensor.npy", self.tensor.round(ROUND_FLOAT))
+        np.save(f"{path}/tensor.npy", tensor.round(ROUND_FLOAT))
         np.save(f"{path}/mask.npy", self.mask)

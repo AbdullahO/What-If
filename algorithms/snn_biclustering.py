@@ -30,7 +30,7 @@ class SNNBiclustering(SNN):
         min_row_sparsity=0.3,
         min_col_sparsity=0.3,
         min_cluster_sparsity=0.3,
-        min_cluster_size=5,
+        min_cluster_size=9,
         no_clusterings=3,
         min_num_clusters=5,
         num_estimates=3,

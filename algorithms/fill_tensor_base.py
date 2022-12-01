@@ -377,17 +377,21 @@ class FillTensorBase(WhatIFAlgorithm):
         new_tensor = self._get_partial_tensor(new_df)
         new_time_factors = self.update_time_factors(new_tensor)
         # update nan mask
+        self._update_nan_mask(new_tensor)
+
+    def _update_nan_mask(self, new_tensor):
         ## TODO: update nan mask based on original fit:
         #        1. if intervention/uni/time never observed --> nan (for all methods)
         #        2. if (time,intervention) never observed --> nan (for SNN)
         #        3. if (time,unit) never observed --> nan (for SNN)
+
         assert (
             self.tensor_nans is not None
         ), "self.tensor_nans is None, have you called fit()?"
         old_shape = self.tensor_nans.shape
         self.tensor_nans.shape = (
             old_shape[0],
-            new_time_factors.shape[0],
+            new_tensor.shape[1] + old_shape[1],
             old_shape[2],
         )
 

@@ -11,6 +11,7 @@ from cachetools.keys import hashkey
 from networkx.algorithms.clique import find_cliques  # type: ignore
 from numpy import float64, int64, ndarray
 from algorithms.fill_tensor_base import FillTensorBase
+import sparse
 
 
 class SNN(FillTensorBase):
@@ -361,6 +362,29 @@ class SNN(FillTensorBase):
             d = float(train_error + subspace_inclusion_stat)
             weight = (1.0 / d) if d > 0 else sys.float_info.max
         return (pred, feasible, weight)
+
+    def _update_nan_mask(self, new_tensor):
+
+        assert (
+            self.tensor_nans is not None
+        ), "self.tensor_nans is None, have you called fit()?"
+        old_shape = self.tensor_nans.shape
+        self.tensor_nans.shape = (
+            old_shape[0],
+            new_tensor.shape[1] + old_shape[1],
+            old_shape[2],
+        )
+        # remove unobserved (i,t) pairs
+        N, T, I = new_tensor.shape
+        X = new_tensor.reshape([N, I * T])
+        mask = np.isnan(X).sum(0)
+        missing = np.where((mask >= N - 2))[0]
+        missing_timesteps = missing // I
+        missing_actions = missing % I
+        tensor_nans = self.tensor_nans.todense()
+        for t, i in zip(missing_timesteps, missing_actions):
+            tensor_nans[:, old_shape[1] + t, i] = 1
+        self.tensor_nans = sparse.COO.from_numpy(tensor_nans)
 
     def _predict(self, X: ndarray, missing_pair: ndarray) -> Tuple[float64, bool]:
         """

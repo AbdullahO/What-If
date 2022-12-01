@@ -14,6 +14,7 @@ from synthetic_data_generation.generate_eval import (
     sales_data_staggering_assignment,
     sales_data_si_assignment,
     sales_data_random_assignment,
+    get_sales_data,
 )
 
 Metric = namedtuple(
@@ -49,7 +50,7 @@ def create_parser():
     return parser
 
 
-def evaluate(data_gen, algorithm, repeat, datasize):
+def evaluate(data_gen, data_assignment, algorithm, repeat, datasize):
     # generate data
     train_time = np.zeros([repeat])
     query_time = np.zeros([repeat])
@@ -58,9 +59,12 @@ def evaluate(data_gen, algorithm, repeat, datasize):
     number_estimated_entries = np.zeros([repeat])
     number_estimated_feasible_entries = np.zeros([repeat])
     for i in range(repeat):
-        data = data_gen(seed=i, num_units=datasize, num_timesteps=datasize)
-        df = data.ss_df
-        tensor = data.tensor
+        data = data_gen(seed=i, N=datasize, T=datasize)
+
+        tensor, full_df = data.generate([0, datasize - 1])
+        periods = data_assignment(data, seed=i, T=data.max_timesteps)
+        _, df = data.auto_subsample(periods, tensor, full_df)
+
         mask = data.mask
         mask = mask.astype(bool)
         model = ALG_REGISTRY[algorithm](verbose=False)
@@ -148,8 +152,8 @@ def main():
     mse = np.zeros([num_datasets, args.repeat])
     number_estimated_entries = np.zeros([num_datasets, args.repeat])
     number_estimated_feasible_entries = np.zeros([num_datasets, args.repeat])
-
-    for k, data_gen in enumerate(datasets_generators):
+    data_gen = get_sales_data
+    for k, data_assignment in enumerate(datasets_generators):
         for alg in args.algorithms:
             for datasize in args.datasize:
                 (
@@ -159,7 +163,7 @@ def main():
                     mse[k, :],
                     number_estimated_entries[k, :],
                     number_estimated_feasible_entries[k, :],
-                ) = evaluate(data_gen, alg, args.repeat, datasize)
+                ) = evaluate(data_gen, data_assignment, alg, args.repeat, datasize)
                 print(f"Evaluate {alg} for {data_names[k]}")
                 print(f"Train time: \t {train_time[k,:].mean()}")
                 print(f"query time: \t {query_time[k,:].mean()}")
