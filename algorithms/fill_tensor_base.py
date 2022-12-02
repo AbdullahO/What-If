@@ -40,6 +40,10 @@ class FillTensorBase(WhatIFAlgorithm):
         self.actions: Optional[List[str]] = None
         self.covariates: Optional[List[str]] = None
         self.true_intervention_assignment_matrix: Optional[ndarray] = None
+        self.distance_error: Optional[ndarray] = None
+        self.cusum: Optional[ndarray] = None
+        self.mean_drift: Optional[float] = None
+        self.tensor_cp_combined_action_unit_factors: Optional[float] = None
 
     def check_model(self):
         error_message_base = " is None, have you called fit()?"
@@ -147,12 +151,22 @@ class FillTensorBase(WhatIFAlgorithm):
 
         # Only save the ALS output tensors
         self.tensor_cp_factors = als_model.cp_factors
+        tensor_compressed = self.get_tensor_from_factors()
+        self.mean_drift = np.nanmean(
+            np.square(tensor_compressed - tensor)
+        ) / np.nanmean(np.square(tensor))
+
+        # necessary post processing for partial fit
         assert (
             self.tensor_cp_factors is not None
         ), "self.tensor_cp_factors is None, check ALS model fit"
         self.tensor_cp_combined_action_unit_factors = self._merge_factors(
             self.tensor_cp_factors[0], self.tensor_cp_factors[2]
         )
+
+        # init distance metric for drift
+        self.distance_error = np.zeros(tensor.shape[1])
+        self.cusum = np.zeros(tensor.shape[1])
 
     def query(
         self,
@@ -369,21 +383,63 @@ class FillTensorBase(WhatIFAlgorithm):
             tensor[mask] = np.nan
         return tensor
 
+    def compute_drift(self, new_tensor, test_split=None):
+        assert (
+            self.tensor_cp_factors is not None
+        ), "self.tensor_cp_factors, have you called fit()?"
+
+        # transfrom tensor to matrix (NI X T)
+        N, T, I = new_tensor.shape
+        matrix = new_tensor.transpose([2, 0, 1]).reshape([N * I, T])
+        obs = matrix.copy()
+        # update factors based on new columns
+        Y = self.tensor_cp_factors[1]
+        X = self.tensor_cp_combined_action_unit_factors
+        if test_split:
+            artificial_mask = np.random.random(obs.shape) < test_split
+            obs[artificial_mask] = np.nan
+        else:
+            artificial_mask = np.ones_like(obs).astype(bool)
+
+        Y_new = self.get_new_time_factors(obs, Y, X, self.min_singular_value)
+        predictions = X @ Y_new.T
+        true = matrix.copy()
+        true[~artificial_mask] = np.nan
+        predicion_error = np.nanmean(
+            np.square((predictions - true)), axis=0
+        ) / np.nanmean(np.square(true), axis=0)
+        assert np.isnan(predicion_error).sum() == 0
+
+        return predicion_error
+
     def partial_fit(
         self,
         new_df: pd.DataFrame,
     ) -> None:
 
         new_tensor = self._get_partial_tensor(new_df)
-        new_time_factors = self.update_time_factors(new_tensor)
+        self.update_time_factors(new_tensor)
+
+        distance_error = self.compute_drift(new_tensor, test_split=None)
+
+        self.distance_error = np.concatenate([self.distance_error, distance_error])
+
+        self._update_cusum()
         # update nan mask
         self._update_nan_mask(new_tensor)
 
+    def _update_cusum(self):
+        current_step = len(self.distance_error)
+        cusum_index = len(self.cusum)
+        self.cusum = np.concatenate([self.cusum, np.zeros(current_step - cusum_index)])
+
+        for t in range(cusum_index, current_step):
+            self.cusum[t] = max(
+                self.cusum[t - 1] + self.distance_error[t] - self.mean_drift,
+                0,
+            )
+
     def _update_nan_mask(self, new_tensor):
-        ## TODO: update nan mask based on original fit:
-        #        1. if intervention/uni/time never observed --> nan (for all methods)
-        #        2. if (time,intervention) never observed --> nan (for SNN)
-        #        3. if (time,unit) never observed --> nan (for SNN)
 
         assert (
             self.tensor_nans is not None
@@ -395,7 +451,7 @@ class FillTensorBase(WhatIFAlgorithm):
             old_shape[2],
         )
 
-    def update_time_factors(self, new_tensor: ndarray) -> ndarray:
+    def update_time_factors(self, new_tensor: ndarray):
         """update time factors using the new observations in new tensor ([N x new_timesteps x I])
 
         Args:
@@ -416,9 +472,16 @@ class FillTensorBase(WhatIFAlgorithm):
         # update factors based on new columns
         Y = self.tensor_cp_factors[1]
         X = self.tensor_cp_combined_action_unit_factors
+        Y_new = self.get_new_time_factors(matrix, Y, X, self.min_singular_value)
+        self.tensor_cp_factors[1] = np.concatenate(
+            [self.tensor_cp_factors[1], Y_new], axis=0
+        )
+        assert self.tensor_cp_factors[1].shape[1] == self.tensor_cp_factors[0].shape[1]
+
+    @staticmethod
+    def get_new_time_factors(matrix, Y, X, min_singular_value):
         k = Y.shape[1]
-        Y_new = np.zeros([Y.shape[0] + matrix.shape[1], k])
-        Y_new[: Y.shape[0], :] = Y
+        Y_new = np.zeros([matrix.shape[1], k])
         for col_i in range(matrix.shape[1]):
             col = matrix[:, col_i]
             observed_entries = np.argwhere(~np.isnan(col)).flatten().astype(int)
@@ -426,11 +489,7 @@ class FillTensorBase(WhatIFAlgorithm):
             b = X[observed_entries, :].T @ col[observed_entries]
             assert b.shape == (k,), b.shape
             assert mat.shape == (k, k), mat.shape
-            Y_new[Y.shape[0] + col_i, :] = np.linalg.lstsq(
-                mat, b, rcond=self.min_singular_value
-            )[0]
-
-        self.tensor_cp_factors[1] = Y_new
+            Y_new[col_i, :] = np.linalg.lstsq(mat, b, rcond=min_singular_value)[0]
         return Y_new
 
     @abstractmethod

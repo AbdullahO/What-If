@@ -240,7 +240,7 @@ class SyntheticDataModule:
         start: Optional[pd.Timestamp] = pd.Timestamp("01/01/2020 00:00"),
         regimes: int = 1,
         regime_splits: Optional[List[int]] = None,
-        same_sub_space_regimes: bool = False
+        same_sub_space_regimes: bool = False,
     ) -> None:
         """_summary_
 
@@ -259,7 +259,7 @@ class SyntheticDataModule:
         self.num_interventions = num_interventions
         self.num_metrics = len(metrics)
         self.metrics = metrics
-        self.effects = []
+        self.effects: List[dict] = []
         self.freq = freq
         self.factors = None
         self.U, self.T, self.I, self.M = (None, None, None, None)
@@ -273,8 +273,6 @@ class SyntheticDataModule:
         self.metrics_range = [metric.range for metric in metrics]
         self.assignments_labels = None
         self.assignments = None
-        self.subpopulations = []
-        self.subpopulations_funcs = []
         self.tensor_min = 0
         self.tensor_max = 0
         self.trend_coeff = None
@@ -346,7 +344,6 @@ class SyntheticDataModule:
         t0, t1 = time_range
         # select regimes
         regimes = self._get_regimes(t0, t1)
-        
         # construct tesnor based on regimes
         first_regime = regimes[0]
         tensor = tl.cp_to_tensor(
@@ -762,8 +759,10 @@ class SyntheticDataModule:
         if self.same_sub_space_regimes:
             rng = np.random.default_rng()
             for reg in range(1, regimes):
-                self.U[..., reg] = rng.permutation(self.U[...,0], axis = 0)
-        
+                self.U[..., reg] = rng.permutation(self.U[..., 0], axis=0)
+                self.I[..., reg] = self.I[..., 0]
+                self.M[..., reg] = self.M[..., 0]
+
         # generate temporal factors
         if periodic:
             self.time_factor_periods = 1 / (np.random.random(self.rank) * max_periods)

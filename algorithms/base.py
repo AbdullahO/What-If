@@ -55,9 +55,9 @@ class WhatIFAlgorithm(ABC, StrReprBase):
         """returns method-specifc summary"""
 
     @abstractmethod
-    def save(self, path):
+    def save(self, path_or_obj):
         """save trained model"""
 
     @abstractmethod
-    def load(self, path):
+    def load(self, path_or_obj):
         """load model"""
