@@ -58,14 +58,7 @@ def create_parser():
 
 
 def evaluate_partial(
-    data_gen,
-    data_assignment,
-    algorithm,
-    repeat,
-    datasize,
-    chunk_size,
-    tensor_nan,
-    init_points=100,
+    data_gen, data_assignment, algorithm, repeat, datasize, chunk_size
 ):
     # generate data
     train_time = np.zeros([repeat])
@@ -87,16 +80,9 @@ def evaluate_partial(
         no_batches = ceil((datasize) / chunk_size)
         start = 0
         for batch in range(no_batches):
-            # if batch ==0:
-            # end = init_points -1
             end = min(start + chunk_size - 1, datasize - 1)
             batch_tensor, full_df = data.generate([start, end])
             periods = data_assignment(data, seed=i * (batch + 1), T=end - start + 1)
-            # else:
-            #     end = min(start + chunk_size - 1, datasize - 1)
-            #     batch_tensor, full_df = data.generate([start, end])
-            #     periods = data_assignment(data, seed=i * (batch + 1), T=end - start + 1)
-
             ss_tensor, df_batch = data.auto_subsample(periods, batch_tensor, full_df)
             batch_mask = data.mask
 
@@ -143,7 +129,6 @@ def evaluate_partial(
             tensor[notnan, 0][~mask[notnan, 0]].flatten(),
             tensor_est[notnan][~mask[notnan, 0]].flatten(),
         )
-        print(r2[i])
         mse[i] = np.nanmean(
             np.square(
                 tensor[..., 0][~mask[..., 0]].flatten()
@@ -205,7 +190,6 @@ def main():
         for alg in args.algorithms:
 
             for chunk_size in args.chunksize:
-                ## Temp solution for mask problem
                 (
                     train_time[k, :],
                     query_time[k, :],
