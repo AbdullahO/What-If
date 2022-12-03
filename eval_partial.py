@@ -57,28 +57,6 @@ def create_parser():
     return parser
 
 
-def get_mask(
-    data_gen,
-    data_assignment,
-    algorithm,
-    datasize,
-):
-    # generate data
-    data = data_gen(seed=0, N=100, T=datasize)
-    model = ALG_REGISTRY[algorithm](verbose=False)
-    tensor, full_df = data.generate([0, datasize - 1])
-    periods = data_assignment(data, seed=0, T=datasize - 1)
-    _, df = data.auto_subsample(periods, tensor, full_df)
-    model.fit(
-        df=df,
-        unit_column="unit_id",
-        time_column="time",
-        metrics=["sales"],
-        actions=["ads"],
-    )
-    return model.tensor_nans.todense()
-
-
 def evaluate_partial(
     data_gen,
     data_assignment,
@@ -155,8 +133,7 @@ def evaluate_partial(
         indices = [model.actions_dict[action] for action in ["ad 0", "ad 1", "ad 2"]]
         _tensor_est = model.get_tensor_from_factors()
         tensor_est = _tensor_est[:, :, indices]
-        if tensor_nan is not None:
-            tensor_est[tensor_nan] = np.nan
+
         # accuracy
         tensor = tensor[:, :-1, :]
         mask = mask[:, :-1, :]
@@ -226,10 +203,6 @@ def main():
         if k < 2:
             continue
         for alg in args.algorithms:
-            if data_names[k] != "random":
-                nan_mask = get_mask(data_gen, data_assignment, "SNN", args.datasize)
-            else:
-                nan_mask = None
 
             for chunk_size in args.chunksize:
                 ## Temp solution for mask problem
@@ -247,7 +220,6 @@ def main():
                     args.repeat,
                     args.datasize,
                     chunk_size,
-                    tensor_nan=nan_mask,
                 )
                 print(f"Evaluate {alg} for {data_names[k]}")
                 print(f"Train time: \t {train_time[k,:].mean()}")
