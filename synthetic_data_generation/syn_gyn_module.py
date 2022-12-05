@@ -10,11 +10,14 @@ import os
 import json
 from typing import List, Optional, Any
 from numpy import ndarray
+from collections import namedtuple
 
 # set backend to numpy explicitly
 tl.set_backend("numpy")
 
 ROUND_FLOAT = 7  # decimal places
+
+RegimeTuple = namedtuple("RegimeTuple", "reg_idx start end")
 
 
 class UnitCov:
@@ -235,6 +238,9 @@ class SyntheticDataModule:
         rank: Optional[int] = 2,
         freq: Optional[str] = None,
         start: Optional[pd.Timestamp] = pd.Timestamp("01/01/2020 00:00"),
+        regimes: int = 1,
+        regime_splits: Optional[List[int]] = None,
+        same_sub_space_regimes: bool = False
     ) -> None:
         """_summary_
 
@@ -277,6 +283,15 @@ class SyntheticDataModule:
         self.time_factor_har_shifts = None
         self.poly_coeff = None
         self.start = start
+        self.regimes = regimes
+        self.same_sub_space_regimes = same_sub_space_regimes
+        if regime_splits is not None:
+            assert len(regime_splits) == regimes - 1
+            self.regime_splits = regime_splits
+        else:
+            self.regime_splits = []
+            for i in range(1, regimes):
+                self.regime_splits.append(int(max_timesteps * (i / regimes)))
 
     def generate_init_factors(
         self,
@@ -298,6 +313,7 @@ class SyntheticDataModule:
             trend_coeff,
             poly_trend,
             poly_coeff,
+            regimes=self.regimes,
         )
         self.factors = self.U, self.T, self.I, self.M
 
@@ -314,12 +330,49 @@ class SyntheticDataModule:
         """
         self.effects += effects
 
+    def _get_regimes(self, t0, t1):
+        splits = np.array(self.regime_splits)
+        splits_in_periods = [s - 1 for s in splits if (s <= t1 and s > t0)] + [t1]
+        first_regime = np.sum(splits <= t0)
+        regimes = [RegimeTuple(first_regime, t0, splits_in_periods[0])] + [
+            RegimeTuple(
+                first_regime + i + 1, splits_in_periods[i] + 1, splits_in_periods[i + 1]
+            )
+            for i in range(len(splits_in_periods) - 1)
+        ]
+        return regimes
+
     def generate(self, time_range):
         t0, t1 = time_range
-        # construct tensor
+        # select regimes
+        regimes = self._get_regimes(t0, t1)
+        
+        # construct tesnor based on regimes
+        first_regime = regimes[0]
         tensor = tl.cp_to_tensor(
-            (np.ones(self.rank), [self.U, self.T[t0 : t1 + 1, :], self.I, self.M])
+            (
+                np.ones(self.rank),
+                [
+                    self.U[..., first_regime.reg_idx],
+                    self.T[first_regime.start : first_regime.end + 1, :],
+                    self.I[..., first_regime.reg_idx],
+                    self.M[..., first_regime.reg_idx],
+                ],
+            )
         )
+        for reg in regimes[1:]:
+            tensor_r = tl.cp_to_tensor(
+                (
+                    np.ones(self.rank),
+                    [
+                        self.U[..., reg.reg_idx],
+                        self.T[reg.start : reg.end + 1, :],
+                        self.I[..., reg.reg_idx],
+                        self.M[..., reg.reg_idx],
+                    ],
+                )
+            )
+            tensor = np.concatenate([tensor, tensor_r], axis=1)
 
         # Adjust metric ranges
         if self.metrics_range is not None:
@@ -335,11 +388,11 @@ class SyntheticDataModule:
             df = self._add_unit_cov(df)
         if self.unit_cov:
             df = self._generate_int_cov(df)
-        tensor = self.genereate_effects(tensor)
+        tensor = self._genereate_effects(tensor)
         df = self._add_metrics(df, tensor)
         return tensor, df
 
-    def genereate_effects(self, tensor):
+    def _genereate_effects(self, tensor):
         for effect in self.effects:
             metric = effect["metric"]
             intervention_number = effect["intervention"]
@@ -572,7 +625,7 @@ class SyntheticDataModule:
     def _init_intervention_covs(self):
         no_int_cov = len(self.int_cov)
         self.intervention_columns = [list() for _ in range(no_int_cov)]
-        no_interventions, _ = self.I.shape
+        no_interventions, _, _ = self.I.shape
 
         ## assign interventions to divisions
         ## e.g., if int_cov is discrete and \in {0,1}, the corresponding column in the assignment
@@ -642,12 +695,12 @@ class SyntheticDataModule:
         return df
 
     def _init_unit_covs(self):
-        _, rank = self.U.shape
+        _, rank, _ = self.U.shape
 
         for cov in self.unit_cov:
             i = np.random.randint(2) + 1
             rs = np.random.choice(np.arange(rank), size=i, replace=False)
-            X = self.U[:, rs]
+            X = self.U[:, rs, 0]
             if cov.discrete:
                 n_c = len(cov.categories)
                 kmeans = KMeans(n_clusters=n_c, random_state=0).fit(X)
@@ -664,7 +717,7 @@ class SyntheticDataModule:
                 cov.unit_labels = labels[:, 0]
 
     def _add_unit_cov(self, df):
-        no_units, _ = self.U.shape
+        no_units, _, _ = self.U.shape
         cov_names = [cov.name for cov in self.unit_cov]
         for c_i, cov in enumerate(self.unit_cov):
             dict_labels = dict(zip(np.arange(no_units), cov.unit_labels))
@@ -698,13 +751,19 @@ class SyntheticDataModule:
         trend_coeff=None,
         poly_trend=False,
         poly_coeff=None,
+        regimes=1,
     ):
-        # Generate factors
-        self.U = np.random.random([self.num_units, self.rank])
-        self.T = np.random.random([self.max_timesteps, self.rank]) - 0.5
-        self.I = np.random.random([self.num_interventions, self.rank])
-        self.M = np.random.random([self.num_metrics, self.rank])
 
+        # Generate factors for each regime
+        self.U = np.random.random([self.num_units, self.rank, regimes])
+        self.T = np.random.random([self.max_timesteps, self.rank]) - 0.5
+        self.I = 2 * np.random.random([self.num_interventions, self.rank, regimes]) - 2
+        self.M = np.random.random([self.num_metrics, self.rank, regimes])
+        if self.same_sub_space_regimes:
+            rng = np.random.default_rng()
+            for reg in range(1, regimes):
+                self.U[..., reg] = rng.permutation(self.U[...,0], axis = 0)
+        
         # generate temporal factors
         if periodic:
             self.time_factor_periods = 1 / (np.random.random(self.rank) * max_periods)
@@ -737,13 +796,22 @@ class SyntheticDataModule:
                 )
             self.poly_coeff = poly_coeff
             self.T[:, r] += self.trend_coeff * np.arange(self.max_timesteps) ** 2
-        self.tensor_max = np.abs(self.T).max()
-        self.tensor_max = tl.cp_to_tensor(
-            (
-                np.ones(self.rank),
-                [self.U, self.tensor_max * np.ones([1, self.rank]), self.I, self.M],
-            )
-        ).max()
+
+        tensor_max_t = np.abs(self.T).max()
+        self.tensor_max = -np.inf
+        for reg in range(regimes):
+            tensor_max = tl.cp_to_tensor(
+                (
+                    np.ones(self.rank),
+                    [
+                        self.U[..., reg],
+                        tensor_max_t * np.ones([1, self.rank]),
+                        self.I[..., reg],
+                        self.M[..., reg],
+                    ],
+                )
+            ).max()
+            self.tensor_max = max(tensor_max, self.tensor_max)
         self.tensor_min = -1 * self.tensor_max
 
     def export(self, name, tensor, ss_df, dir=""):
