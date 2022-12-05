@@ -7,7 +7,7 @@ from synthetic_data_generation.syn_gyn_module import (
 )
 
 
-def get_sales_data(seed, T, N, drifts=None):
+def get_sales_data(seed, T, N, drifts=None, same_sub_space_regimes=False):
     np.random.seed(seed)
     # Time
     max_timesteps = T
@@ -49,8 +49,9 @@ def get_sales_data(seed, T, N, drifts=None):
         unit_cov,
         int_cov,
         freq="1D",
-        regimes=no_drifts,
+        regimes=no_drifts + 1,
         regime_splits=drifts,
+        same_sub_space_regimes=same_sub_space_regimes,
     )
 
     # generate initial factors

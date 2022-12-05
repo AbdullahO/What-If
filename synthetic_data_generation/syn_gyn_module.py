@@ -240,6 +240,7 @@ class SyntheticDataModule:
         start: Optional[pd.Timestamp] = pd.Timestamp("01/01/2020 00:00"),
         regimes: int = 1,
         regime_splits: Optional[List[int]] = None,
+        same_sub_space_regimes: bool = False
     ) -> None:
         """_summary_
 
@@ -283,7 +284,9 @@ class SyntheticDataModule:
         self.poly_coeff = None
         self.start = start
         self.regimes = regimes
+        self.same_sub_space_regimes = same_sub_space_regimes
         if regime_splits is not None:
+            assert len(regime_splits) == regimes - 1
             self.regime_splits = regime_splits
         else:
             self.regime_splits = []
@@ -329,7 +332,7 @@ class SyntheticDataModule:
 
     def _get_regimes(self, t0, t1):
         splits = np.array(self.regime_splits)
-        splits_in_periods = [s for s in splits if (s <= t1 and s >= t0)] + [t1]
+        splits_in_periods = [s - 1 for s in splits if (s <= t1 and s > t0)] + [t1]
         first_regime = np.sum(splits <= t0)
         regimes = [RegimeTuple(first_regime, t0, splits_in_periods[0])] + [
             RegimeTuple(
@@ -341,10 +344,10 @@ class SyntheticDataModule:
 
     def generate(self, time_range):
         t0, t1 = time_range
-        # construct tensor
         # select regimes
         regimes = self._get_regimes(t0, t1)
-        # construct based on regime
+        
+        # construct tesnor based on regimes
         first_regime = regimes[0]
         tensor = tl.cp_to_tensor(
             (
@@ -756,7 +759,11 @@ class SyntheticDataModule:
         self.T = np.random.random([self.max_timesteps, self.rank]) - 0.5
         self.I = 2 * np.random.random([self.num_interventions, self.rank, regimes]) - 2
         self.M = np.random.random([self.num_metrics, self.rank, regimes])
-
+        if self.same_sub_space_regimes:
+            rng = np.random.default_rng()
+            for reg in range(1, regimes):
+                self.U[..., reg] = rng.permutation(self.U[...,0], axis = 0)
+        
         # generate temporal factors
         if periodic:
             self.time_factor_periods = 1 / (np.random.random(self.rank) * max_periods)
