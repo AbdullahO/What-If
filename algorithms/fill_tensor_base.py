@@ -16,15 +16,31 @@ from algorithms.base import WhatIFAlgorithm
 
 ModelTuple = namedtuple(
     "ModelTuple",
-    "actions_dict units_dict time_dict tensor_nans tensor_cp_factors true_intervention_assignment_matrix unit_column time_column actions metric",
+    "actions_dict units_dict time_dict tensor_nans regimes true_intervention_assignment_matrix unit_column time_column actions metric current_regime_tensor cusum distance_error",
 )
+
+
+class Regime(object):
+    # This may be changed to a namedTuple or dataclass?
+    """Base class for data generation regimes, each regime will consist of its own latent factors"""
+
+    def __init__(self, index, start_time):
+        self.index: int = index
+        self.start_time: int = start_time
+        self.end_time: Optional[int] = None
+        self.tensor_cp_factors: Optional[ndarray] = None
+        self.tensor_cp_combined_action_unit_factors: Optional[ndarray] = None
+        self.mean_drift: Optional[float] = None
 
 
 class FillTensorBase(WhatIFAlgorithm):
     """Base class for all whatif algorithms that uses the tensor view"""
 
     def __init__(
-        self, verbose: Optional[bool] = False, min_singular_value: float = 1e-7
+        self,
+        verbose: Optional[bool] = False,
+        min_singular_value: float = 1e-7,
+        full_training_time_steps: int = 20,
     ) -> None:
 
         self.verbose = verbose
@@ -33,7 +49,6 @@ class FillTensorBase(WhatIFAlgorithm):
         self.units_dict: Optional[dict] = None
         self.time_dict: Optional[dict] = None
         self.tensor_nans: Optional[sparse.COO] = None
-        self.tensor_cp_factors: Optional[List[tl.CPTensor]] = None
         self.metric: Optional[str] = None
         self.unit_column: Optional[str] = None
         self.time_column: Optional[str] = None
@@ -42,14 +57,26 @@ class FillTensorBase(WhatIFAlgorithm):
         self.true_intervention_assignment_matrix: Optional[ndarray] = None
         self.distance_error: Optional[ndarray] = None
         self.cusum: Optional[ndarray] = None
-        self.mean_drift: Optional[float] = None
-        self.tensor_cp_combined_action_unit_factors: Optional[float] = None
+        self.full_training_time_steps = full_training_time_steps
+        self.current_regime_tensor: Optional[ndarray] = None
+        self.threshold_multiplier: int = 10
+        self.regimes: List[Regime] = []
 
     def check_model(self):
         error_message_base = " is None, have you called fit()?"
-        if self.tensor_cp_factors is None:
-            raise ValueError(f"self.tensor_cp_factors{error_message_base}")
-        # TODO: right now we will raise ValueError if tensor_nans is None, should we allow None?
+        if len(self.regimes) == 0:
+            raise ValueError(f"self.regime {error_message_base}")
+        for r, regime in enumerate(self.regimes):
+            if regime.tensor_cp_factors is None:
+                raise ValueError(
+                    f"for regime {r}, self.tensor_cp_factors{error_message_base}"
+                )
+            if regime.tensor_cp_combined_action_unit_factors is None:
+                raise ValueError(
+                    f"for regime {r}, self.tensor_cp_combined_action_unit_factors{error_message_base}"
+                )
+            if regime.mean_drift is None:
+                raise ValueError(f"for regime {r}, self.mean_drift{error_message_base}")
         if self.tensor_nans is None:
             raise ValueError(f"self.tensor_nans{error_message_base}")
         if self.units_dict is None:
@@ -70,18 +97,25 @@ class FillTensorBase(WhatIFAlgorithm):
             raise ValueError(f"self.actions{error_message_base}")
         if self.metric is None:
             raise ValueError(f"self.metric{error_message_base}")
+        if self.cusum is None:
+            raise ValueError(f"self.cusum{error_message_base}")
+        if self.distance_error is None:
+            raise ValueError(f"self.distance_error{error_message_base}")
 
         return ModelTuple(
             self.actions_dict,
             self.units_dict,
             self.time_dict,
             self.tensor_nans,
-            self.tensor_cp_factors,
+            self.regimes,
             self.true_intervention_assignment_matrix,
             self.unit_column,
             self.time_column,
             self.actions,
             self.metric,
+            self.current_regime_tensor,
+            self.cusum,
+            self.distance_error,
         )
 
     @property
@@ -134,14 +168,28 @@ class FillTensorBase(WhatIFAlgorithm):
         self.time_column = time_column
         self.actions = actions
         self.covariates = covariates
-
         # get tensor from df and labels
-        tensor = self._get_tensor(df, unit_column, time_column, actions, metrics)
+        tensor = self._get_tensor(
+            df, self.unit_column, self.time_column, self.actions, [self.metric]
+        )
+
+        # init initial regime
+        strating_regime = Regime(0, 0)
+        self.regimes.append(strating_regime)
+        self._fit(tensor, 0)
+
+    def _fit(self, tensor, regime_index):
 
         # fill tensor
         tensor_filled = self._fit_transform(tensor)
 
-        self.tensor_nans = sparse.COO.from_numpy(np.isnan(tensor_filled))
+        tensor_nans = sparse.COO.from_numpy(np.isnan(tensor_filled))
+        if self.tensor_nans is None:
+            self.tensor_nans = tensor_nans
+        else:
+            self.tensor_nans = sparse.concatenate(
+                [tensor_nans, self.tensor_nans], axis=1
+            )
 
         # Apply Alternating Least Squares to decompose the tensor into CP form
         als_model = ALS()
@@ -149,24 +197,39 @@ class FillTensorBase(WhatIFAlgorithm):
         # Modifies tensor by filling nans with zeros
         als_model.fit(tensor_filled)
 
+        regime = self.regimes[regime_index]
         # Only save the ALS output tensors
-        self.tensor_cp_factors = als_model.cp_factors
-        tensor_compressed = self.get_tensor_from_factors()
-        self.mean_drift = np.nanmean(
-            np.square(tensor_compressed - tensor)
-        ) / np.nanmean(np.square(tensor))
-
-        # necessary post processing for partial fit
-        assert (
-            self.tensor_cp_factors is not None
-        ), "self.tensor_cp_factors is None, check ALS model fit"
-        self.tensor_cp_combined_action_unit_factors = self._merge_factors(
-            self.tensor_cp_factors[0], self.tensor_cp_factors[2]
+        regime.tensor_cp_factors = als_model.cp_factors
+        tensor_compressed = self.get_tensor_from_factors(regime)
+        regime.mean_drift = (
+            2
+            * np.nanmean(np.square(tensor_compressed - tensor))
+            / np.nanmean(np.square(tensor))
         )
 
+        # necessary post processing need for partial fit
+        assert (
+            regime.tensor_cp_factors is not None
+        ), "self.tensor_cp_factors is None, check ALS model fit"
+        regime.tensor_cp_combined_action_unit_factors = self._merge_factors(
+            regime.tensor_cp_factors[0], regime.tensor_cp_factors[2]
+        )
+
+        if tensor.shape[1] < self.full_training_time_steps:
+            # store the original tensor for potential full update
+            self.current_regime_tensor = np.array(tensor)
+
         # init distance metric for drift
-        self.distance_error = np.zeros(tensor.shape[1])
-        self.cusum = np.zeros(tensor.shape[1])
+        if self.distance_error is None:
+            self.distance_error = np.zeros(tensor.shape[1])
+            self.cusum = np.zeros(tensor.shape[1])
+        else:
+            self.distance_error = self.distance_error[: regime.start_time]
+            self.distance_error = np.concatenate(
+                [self.distance_error, np.zeros(tensor.shape[1])]
+            )
+            self.cusum = self.cusum[: regime.start_time]
+            self.cusum = np.concatenate([self.cusum, np.zeros(tensor.shape[1])])
 
     def query(
         self,
@@ -194,7 +257,7 @@ class FillTensorBase(WhatIFAlgorithm):
         # get idx
         time_idx = [time_dict[t] for t in timesteps]
 
-        tensor = self.get_tensor_from_factors(unit_idx=unit_idx, time_idx=time_idx)
+        tensor = self.query_tensor(unit_idx=unit_idx, time_idx=time_idx)
 
         # convert to timestamp
         _action_time_range = [pd.Timestamp(t) for t in action_time_range]
@@ -222,6 +285,47 @@ class FillTensorBase(WhatIFAlgorithm):
         # return unit X time DF
         out_df = pd.DataFrame(data=selected_matrix, index=units, columns=timesteps)
         return out_df
+
+    def query_tensor(self, unit_idx, time_idx):
+        # find relevant regimes based on time
+        start_idx, end_idx = time_idx[0], time_idx[-1]
+        # filter based on end_idx
+        regimes = [regime for regime in self.regimes if regime.start_time <= end_idx]
+        # filter based on start_idx, regime.end_time may be None; when it is Nonr it should pass
+        regimes = [
+            regime
+            for regime in regimes
+            if float(regime.end_time or start_idx) >= start_idx
+        ]
+
+        # query from each regime
+        tensor = np.zeros([len(unit_idx), 0, self.I])
+        for regime in regimes:
+            regime_time_idx_start = (
+                max(start_idx, regime.start_time) - regime.start_time
+            )
+            regime_time_idx_end = (
+                min(end_idx, float(regime.end_time or end_idx)) - regime.start_time
+            )
+            regime_time_idx = np.arange(
+                regime_time_idx_start, regime_time_idx_end + 1
+            ).astype(int)
+            tensor_regime = self.get_tensor_from_factors(
+                regime, unit_idx=unit_idx, time_idx=regime_time_idx
+            )
+            tensor = np.concatenate([tensor, tensor_regime], axis=1)
+
+        # mask and then return tensor
+        if self.tensor_nans is not None:
+            # Assumes factors are in order N, T, I (unit, time, intervention)
+            tensor_nans = self.tensor_nans
+            if unit_idx is not None:
+                tensor_nans = tensor_nans[unit_idx]
+            if time_idx is not None:
+                tensor_nans = tensor_nans[:, time_idx]
+            mask = tensor_nans.todense()
+            tensor[mask] = np.nan
+        return tensor
 
     def _get_metric_matrix(
         self, df: pd.DataFrame, unit_column: str, time_column: str, metric: str
@@ -285,7 +389,7 @@ class FillTensorBase(WhatIFAlgorithm):
         timesteps = df[time_column].unique()
         T = len(timesteps)
 
-        max_t = max(list(time_dict.values()))
+        max_t = max(list(time_dict.values())) + 1
         time_dict.update(
             dict(zip(metric_matrix_df.columns, np.arange(max_t, max_t + T)))
         )
@@ -366,50 +470,31 @@ class FillTensorBase(WhatIFAlgorithm):
 
     def get_tensor_from_factors(
         self,
+        regime: Regime,
         unit_idx: Optional[List[int]] = None,
         time_idx: Optional[List[int]] = None,
     ):
         tensor = ALS._predict(
-            self.tensor_cp_factors, unit_idx=unit_idx, time_idx=time_idx
+            regime.tensor_cp_factors, unit_idx=unit_idx, time_idx=time_idx
         )
-        if self.tensor_nans is not None:
-            # Assumes factors are in order N, T, I (unit, time, intervention)
-            tensor_nans = self.tensor_nans
-            if unit_idx is not None:
-                tensor_nans = tensor_nans[unit_idx]
-            if time_idx is not None:
-                tensor_nans = tensor_nans[:, time_idx]
-            mask = tensor_nans.todense()
-            tensor[mask] = np.nan
         return tensor
 
-    def compute_drift(self, new_tensor, test_split=None):
-        assert (
-            self.tensor_cp_factors is not None
-        ), "self.tensor_cp_factors, have you called fit()?"
-
+    def _compute_drift(self, new_tensor, Y_new, regime):
         # transfrom tensor to matrix (NI X T)
         N, T, I = new_tensor.shape
         matrix = new_tensor.transpose([2, 0, 1]).reshape([N * I, T])
-        obs = matrix.copy()
-        # update factors based on new columns
-        Y = self.tensor_cp_factors[1]
-        X = self.tensor_cp_combined_action_unit_factors
-        if test_split:
-            artificial_mask = np.random.random(obs.shape) < test_split
-            obs[artificial_mask] = np.nan
-        else:
-            artificial_mask = np.ones_like(obs).astype(bool)
 
-        Y_new = self.get_new_time_factors(obs, Y, X, self.min_singular_value)
+        # get factors and predict
+        X = regime.tensor_cp_combined_action_unit_factors
         predictions = X @ Y_new.T
+
+        # compute error
         true = matrix.copy()
-        true[~artificial_mask] = np.nan
         predicion_error = np.nanmean(
             np.square((predictions - true)), axis=0
         ) / np.nanmean(np.square(true), axis=0)
-        assert np.isnan(predicion_error).sum() == 0
 
+        assert np.isnan(predicion_error).sum() == 0
         return predicion_error
 
     def partial_fit(
@@ -417,27 +502,87 @@ class FillTensorBase(WhatIFAlgorithm):
         new_df: pd.DataFrame,
     ) -> None:
 
+        time_pointer = self.T
+        current_regime = self.regimes[-1]
+
+        if self.verbose:
+            print(
+                f"current regime: {current_regime.index}, started at: {current_regime.start_time}"
+            )
+
+        # check whether we have used enough data points to train the model
+        ## None means it has reached full update state
+        if self.current_regime_tensor is None:
+            partial_update = True
+        ## else check condition
+        else:
+            no_training_points = self.current_regime_tensor.shape[1]
+            partial_update = no_training_points >= self.full_training_time_steps
+
+        # load tensor
         new_tensor = self._get_partial_tensor(new_df)
-        self.update_time_factors(new_tensor)
 
-        distance_error = self.compute_drift(new_tensor, test_split=None)
+        if partial_update:
+            if self.verbose:
+                print("partial_update")
+            # if so just update factors
+            Y_new = self._compute_updated_factors(new_tensor, current_regime)
+            distance_error = self._compute_drift(new_tensor, Y_new, current_regime)
+            self.distance_error = np.concatenate([self.distance_error, distance_error])
+            self._update_cusum(current_regime)
+            regime_shift, shift_time = self._check_regime_shift(current_regime)
+            if regime_shift:
+                if self.verbose:
+                    print(f"regime shift, at {shift_time}")
+                # update factors until shift_time
+                non_shift_period = shift_time - time_pointer
+                if non_shift_period:
+                    self._update_time_factors(
+                        Y_new[:non_shift_period, :], current_regime.index
+                    )
+                # init new regime and append
+                self.regimes[-1].end_time = shift_time - 1
+                new_regime = Regime(len(self.regimes), shift_time)
+                self.regimes.append(new_regime)
 
-        self.distance_error = np.concatenate([self.distance_error, distance_error])
+                # fit using new regime
+                tensor = new_tensor[:, non_shift_period:, :]
+                self._fit(tensor, new_regime.index)
 
-        self._update_cusum()
-        # update nan mask
-        self._update_nan_mask(new_tensor)
+            else:
+                self._update_time_factors(Y_new, current_regime.index)
 
-    def _update_cusum(self):
+            # update nan mask
+            self._update_nan_mask(new_tensor)
+
+        else:
+            # else fully train again
+            tensor = np.concatenate([self.current_regime_tensor, new_tensor], axis=1)
+            self._fit(tensor, current_regime.index)
+            self.current_regime_tensor = tensor
+            # delete current regime if full training status is reached
+            if self.current_regime_tensor.shape[1] > self.full_training_time_steps:
+                self.current_regime_tensor = None
+
+    def _update_cusum(self, regime):
         current_step = len(self.distance_error)
         cusum_index = len(self.cusum)
         self.cusum = np.concatenate([self.cusum, np.zeros(current_step - cusum_index)])
 
         for t in range(cusum_index, current_step):
             self.cusum[t] = max(
-                self.cusum[t - 1] + self.distance_error[t] - self.mean_drift,
+                self.cusum[t - 1] + self.distance_error[t] - regime.mean_drift,
                 0,
             )
+
+    def _check_regime_shift(self, regime):
+        threshold = self.threshold_multiplier * regime.mean_drift
+        check = self.cusum[regime.start_time :] > threshold
+        shift = check.sum() > 0
+        shift_time = None
+        if shift:
+            shift_time = np.argmax(check) + regime.start_time
+        return shift, shift_time
 
     def _update_nan_mask(self, new_tensor):
 
@@ -451,7 +596,7 @@ class FillTensorBase(WhatIFAlgorithm):
             old_shape[2],
         )
 
-    def update_time_factors(self, new_tensor: ndarray):
+    def _compute_updated_factors(self, new_tensor: ndarray, regime: Regime):
         """update time factors using the new observations in new tensor ([N x new_timesteps x I])
 
         Args:
@@ -462,21 +607,27 @@ class FillTensorBase(WhatIFAlgorithm):
         """
         # check if self.tensor_cp_factors is not None
         assert (
-            self.tensor_cp_factors is not None
-        ), "self.tensor_cp_factors, have you called fit()?"
+            regime.tensor_cp_factors is not None
+        ), "regime.tensor_cp_factors is None, have you called fit()?"
 
         # transfrom tensor to matrix (NI X T)
         N, T, I = new_tensor.shape
         matrix = new_tensor.transpose([2, 0, 1]).reshape([N * I, T])
 
         # update factors based on new columns
-        Y = self.tensor_cp_factors[1]
-        X = self.tensor_cp_combined_action_unit_factors
+        Y = regime.tensor_cp_factors[1]
+        X = regime.tensor_cp_combined_action_unit_factors
         Y_new = self.get_new_time_factors(matrix, Y, X, self.min_singular_value)
-        self.tensor_cp_factors[1] = np.concatenate(
-            [self.tensor_cp_factors[1], Y_new], axis=0
+        return Y_new
+
+    def _update_time_factors(self, Y_new, regime_index):
+        regime = self.regimes[regime_index]
+        regime.tensor_cp_factors[1] = np.concatenate(
+            [regime.tensor_cp_factors[1], Y_new], axis=0
         )
-        assert self.tensor_cp_factors[1].shape[1] == self.tensor_cp_factors[0].shape[1]
+        assert (
+            regime.tensor_cp_factors[1].shape[1] == regime.tensor_cp_factors[0].shape[1]
+        )
 
     @staticmethod
     def get_new_time_factors(matrix, Y, X, min_singular_value):
@@ -545,14 +696,15 @@ class FillTensorBase(WhatIFAlgorithm):
             "actions_dict": model_tuple.actions_dict,
             "units_dict": model_tuple.units_dict,
             "time_dict": model_tuple.time_dict,
-            "tensor_cp_factors": np.array(
-                model_tuple.tensor_cp_factors, dtype="object"
-            ),
+            "regimes": model_tuple.regimes,
             "true_intervention_assignment_matrix": model_tuple.true_intervention_assignment_matrix,
             "unit_column": model_tuple.unit_column,
             "time_column": model_tuple.time_column,
             "actions": model_tuple.actions,
             "metric": model_tuple.metric,
+            "cusum": model_tuple.cusum,
+            "distance_error": model_tuple.distance_error,
+            "current_regime_tensor": model_tuple.current_regime_tensor,
             **{f"tensor_nans_{key}": value for key, value in tensor_nans_dict.items()},
         }
         return model_dict
@@ -582,7 +734,7 @@ class FillTensorBase(WhatIFAlgorithm):
         actions_dict = loaded_dict.pop("actions_dict").tolist()
         units_dict = loaded_dict.pop("units_dict").tolist()
         time_dict = loaded_dict.pop("time_dict").tolist()
-        tensor_cp_factors = loaded_dict.pop("tensor_cp_factors").tolist()
+        regimes = loaded_dict.pop("regimes").tolist()
         true_intervention_assignment_matrix = loaded_dict.pop(
             "true_intervention_assignment_matrix"
         )
@@ -590,6 +742,9 @@ class FillTensorBase(WhatIFAlgorithm):
         time_column = loaded_dict.pop("time_column")
         actions = loaded_dict.pop("actions").tolist()
         metric = loaded_dict.pop("metric")
+        cusum = loaded_dict.pop("cusum")
+        distance_error = loaded_dict.pop("distance_error")
+        current_regime_tensor = loaded_dict.pop("current_regime_tensor")
 
         tensor_nans_prefix = "tensor_nans_"
         tensor_nans_dict = {
@@ -601,13 +756,16 @@ class FillTensorBase(WhatIFAlgorithm):
         self.actions_dict = actions_dict
         self.units_dict = units_dict
         self.time_dict = time_dict
-        self.tensor_cp_factors = tensor_cp_factors
+        self.regimes = regimes
         self.true_intervention_assignment_matrix = true_intervention_assignment_matrix
         self.unit_column = unit_column
         self.time_column = time_column
         self.actions = actions
         self.metric = metric
         self.tensor_nans = tensor_nans
+        self.cusum = cusum
+        self.distance_error = distance_error
+        self.current_regime_tensor = current_regime_tensor
         self.check_model()
 
     def load_binary(self, bytes_str):

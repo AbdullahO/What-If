@@ -35,6 +35,7 @@ class SNNBiclustering(SNN):
         min_num_clusters=5,
         num_estimates=3,
         seed=None,
+        full_training_time_steps=10,
     ):
         """
         Parameters
@@ -100,6 +101,7 @@ class SNNBiclustering(SNN):
             min_value=min_value,
             verbose=verbose,
             min_singular_value=min_singular_value,
+            full_training_time_steps=full_training_time_steps,
         )
         self.min_col_sparsity: float = min_col_sparsity
         self.min_row_sparsity: float = min_row_sparsity
@@ -164,10 +166,11 @@ class SNNBiclustering(SNN):
         self.clusters_hashes = set()
 
         for idx in range(self.no_clusterings):
+            min_shape = min(self.mask.shape)
             model = SpectralBiclustering(
                 n_clusters=(
-                    self.min_num_clusters + 2 * idx,
-                    self.min_num_clusters + 2 * idx,
+                    min(self.min_num_clusters + 2 * idx, min_shape),
+                    min(self.min_num_clusters + 2 * idx, min_shape),
                 ),
                 n_best=6 + idx,
                 n_components=7 + idx,
@@ -236,7 +239,12 @@ class SNNBiclustering(SNN):
         filled_matrix = self._snn_fit_transform(X, test_set)
 
         # reshape matrix into tensor
-        tensor = filled_matrix.reshape([N, T, I])
+        tensor = filled_matrix.reshape(N, T, I)
+
+        # clear cache
+        self._map_missing_value.cache.clear()
+        self._get_beta_from_factors.cache.clear()
+
         return tensor
 
     @cached(
@@ -261,7 +269,7 @@ class SNNBiclustering(SNN):
         clusters_sizes = clusters_row_matching * clusters_col_matching
         viable_clusters = (clusters_sizes >= self.min_cluster_size).sum()
         if viable_clusters == 0:
-            return []
+            return None
 
         selected_cluster = np.argsort(clusters_sizes)[-self.num_estimates :]
         selected_cluster = [
@@ -272,6 +280,7 @@ class SNNBiclustering(SNN):
         return selected_cluster, obs_rows_vector, obs_cols_vector
 
     def _predict(self, X, missing_pair):
+
         i, j = missing_pair
         obs_rows = np.argwhere(~np.isnan(X[:, j])).flatten()
         obs_cols = np.argwhere(~np.isnan(X[i, :])).flatten()
@@ -283,18 +292,21 @@ class SNNBiclustering(SNN):
 
         estimates = np.full(self.num_estimates, np.nan)
         feasibles = np.full(self.num_estimates, np.nan)
-
-        selected_clusters, obs_rows_vector, obs_cols_vector = self._map_missing_value(
+        mapped_clusters = self._map_missing_value(
             X,
             _obs_rows,
             _obs_cols,
         )
-
+        if mapped_clusters is None:
+            return np.nan, False
+        else:
+            selected_clusters, obs_rows_vector, obs_cols_vector = mapped_clusters
         counter = 0
 
         if len(selected_clusters) == 0:
             return np.nan, False
         for clus in selected_clusters:
+
             # get minimal anchor rows and cols
             rows_cluster = self.clusters_row_matrix[clus, :]
             cols_cluster = self.clusters_col_matrix[clus, :]
@@ -328,6 +340,7 @@ class SNNBiclustering(SNN):
         """
         estimate the missing values based on cluster <cluster?
         """
+
         # check if factors is already computed
         (missing_row, missing_col) = missing_pair
         cluster = self.clusters[cluster_idx]
