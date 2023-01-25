@@ -796,15 +796,24 @@ class SyntheticDataModule:
             self.poly_coeff = poly_coeff
             self.T[:, r] += self.trend_coeff * np.arange(self.max_timesteps) ** 2
 
-        tensor_max_t = np.abs(self.T).max()
         self.tensor_max = -np.inf
         for reg in range(regimes):
+            end = None
+            if reg == 0:
+                start = 0
+            else:
+                start = self.regime_splits[reg-1]
+            if reg == regimes -1:
+                end = None 
+            else:
+                end = self.regime_splits[reg]
+                
             tensor_max = tl.cp_to_tensor(
                 (
                     np.ones(self.rank),
                     [
                         self.U[..., reg],
-                        tensor_max_t * np.ones([1, self.rank]),
+                        self.T[ start: end, ...],
                         self.I[..., reg],
                         self.M[..., reg],
                     ],

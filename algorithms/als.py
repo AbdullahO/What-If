@@ -55,14 +55,26 @@ class AlternatingLeastSquares(StrReprBase):
         tensor_mask[np.isnan(tensor)] = 0
         # fill zeros for nan
         tensor[np.isnan(tensor)] = 0
+        N, T, I = tensor.shape
         # apply PARAFAC (ALS)
         np.random.seed(0)
-        self.cp_tensor = tl.decomposition.parafac(
-            tensor,
-            self.k_factors,
-            n_iter_max=self.max_iterations,
-            mask=tensor_mask,
-        )
+        try:
+            self.cp_tensor = tl.decomposition.parafac(
+                tensor,
+                self.k_factors,
+                n_iter_max=self.max_iterations,
+                mask=tensor_mask,
+            )
+        ## to resolve singular matrices issue by adding some gausian noise
+        except:
+            print("exception!")
+            tensor_adjusted = tensor + 1e-2 * tensor.mean() * np.random.randn(N, T, I)
+            self.cp_tensor = tl.decomposition.parafac(
+                tensor_adjusted,
+                self.k_factors,
+                n_iter_max=self.max_iterations,
+                mask=tensor_mask,
+            )
         weights, factors = self.cp_tensor
         assert np.allclose(
             np.ones(self.k_factors), weights
