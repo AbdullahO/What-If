@@ -273,7 +273,7 @@ def test_model_str(snn_model: SNN):
         " linear_span_eps=0.1, max_rank=None, max_value=None,"
         " metric='sales', min_singular_value=1e-07, min_value=None,"
         " n_neighbors=1, random_splits=False, spectral_t=None, subspace_eps=0.1,"
-        " threshold_multiplier=20, time_column='time', unit_column='unit_id', verbose=False, weights='uniform')"
+        " threshold_multiplier=10, time_column='time', unit_column='unit_id', verbose=False, weights='uniform')"
     )
 
 
