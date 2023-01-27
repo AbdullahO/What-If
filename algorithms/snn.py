@@ -32,7 +32,8 @@ class SNN(FillTensorBase):
         max_value: Optional[float] = None,
         verbose: bool = True,
         min_singular_value: float = 1e-7,
-        full_training_time_steps:int = 10
+        full_training_time_steps:int = 10,
+        threshold_multiplier:int = 10
     ) -> None:
         """
         Parameters
@@ -72,7 +73,7 @@ class SNN(FillTensorBase):
 
         verbose : bool
         """
-        super().__init__(verbose=verbose, min_singular_value=min_singular_value, full_training_time_steps = full_training_time_steps)
+        super().__init__(verbose=verbose, min_singular_value=min_singular_value, full_training_time_steps = full_training_time_steps, threshold_multiplier = threshold_multiplier)
         self.n_neighbors = n_neighbors
         self.weights = weights
         self.random_splits = random_splits
@@ -379,7 +380,7 @@ class SNN(FillTensorBase):
         N, T, I = new_tensor.shape
         X = new_tensor.reshape([N, I * T])
         mask = np.isnan(X).sum(0)
-        missing = np.where((mask >= N - 2))[0]
+        missing = np.where((mask >= N - 3))[0]
         missing_timesteps = missing // I
         missing_actions = missing % I
         tensor_nans = self.tensor_nans.todense()

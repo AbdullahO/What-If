@@ -41,6 +41,7 @@ class FillTensorBase(WhatIFAlgorithm):
         verbose: Optional[bool] = False,
         min_singular_value: float = 1e-7,
         full_training_time_steps: int = 20,
+        threshold_multiplier: int = 10
     ) -> None:
 
         self.verbose = verbose
@@ -59,7 +60,7 @@ class FillTensorBase(WhatIFAlgorithm):
         self.cusum: Optional[ndarray] = None
         self.full_training_time_steps = full_training_time_steps
         self.current_regime_tensor: Optional[ndarray] = None
-        self.threshold_multiplier: int = 10
+        self.threshold_multiplier: int = threshold_multiplier
         self.regimes: List[Regime] = []
 
     def check_model(self):
@@ -179,17 +180,38 @@ class FillTensorBase(WhatIFAlgorithm):
         self._fit(tensor, 0)
 
     def _fit(self, tensor, regime_index):
+        # get regime
+        regime = self.regimes[regime_index]
 
         # fill tensor
         tensor_filled = self._fit_transform(tensor)
 
         tensor_nans = sparse.COO.from_numpy(np.isnan(tensor_filled))
+        # new tensor_nan !
         if self.tensor_nans is None:
             self.tensor_nans = tensor_nans
+        # append to old tensor based on regime start time
         else:
-            self.tensor_nans = sparse.concatenate(
-                [tensor_nans, self.tensor_nans], axis=1
+            regime_start = regime.start_time
+            old_tensor_coords = self.tensor_nans.coords
+            old_shape = (
+                self.tensor_nans.shape[0],
+                regime_start,
+                self.tensor_nans.shape[2],
             )
+            indices = [
+                i for i, t in enumerate(old_tensor_coords[1]) if t < regime_start
+            ]
+            data = self.tensor_nans.data[indices]
+            coords = [
+                self.tensor_nans.coords[0][indices],
+                self.tensor_nans.coords[1][indices],
+                self.tensor_nans.coords[2][indices],
+            ]
+            old_tensor = sparse.COO(
+                coords=coords, data=data, shape=old_shape, sorted=True
+            )
+            self.tensor_nans = sparse.concatenate([old_tensor, tensor_nans], axis=1)
 
         # Apply Alternating Least Squares to decompose the tensor into CP form
         als_model = ALS()
@@ -197,7 +219,6 @@ class FillTensorBase(WhatIFAlgorithm):
         # Modifies tensor by filling nans with zeros
         als_model.fit(tensor_filled)
 
-        regime = self.regimes[regime_index]
         # Only save the ALS output tensors
         regime.tensor_cp_factors = als_model.cp_factors
         tensor_compressed = self.get_tensor_from_factors(regime)
@@ -506,9 +527,9 @@ class FillTensorBase(WhatIFAlgorithm):
         current_regime = self.regimes[-1]
 
         if self.verbose:
-            print(
-                f"current regime: {current_regime.index}, started at: {current_regime.start_time}"
-            )
+        print(
+            f"current regime: {current_regime.index}, started at: {current_regime.start_time}"
+        )
 
         # check whether we have used enough data points to train the model
         ## None means it has reached full update state
@@ -524,7 +545,7 @@ class FillTensorBase(WhatIFAlgorithm):
 
         if partial_update:
             if self.verbose:
-                print("partial_update")
+            print("partial_update")
             # if so just update factors
             Y_new = self._compute_updated_factors(new_tensor, current_regime)
             distance_error = self._compute_drift(new_tensor, Y_new, current_regime)
