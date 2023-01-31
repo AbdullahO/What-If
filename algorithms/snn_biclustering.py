@@ -36,6 +36,7 @@ class SNNBiclustering(SNN):
         num_estimates=3,
         seed=None,
         full_training_time_steps=10,
+        threshold_multiplier = 10
     ):
         """
         Parameters
@@ -102,6 +103,7 @@ class SNNBiclustering(SNN):
             verbose=verbose,
             min_singular_value=min_singular_value,
             full_training_time_steps=full_training_time_steps,
+            threshold_multiplier = threshold_multiplier
         )
         self.min_col_sparsity: float = min_col_sparsity
         self.min_row_sparsity: float = min_row_sparsity
