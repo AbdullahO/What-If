@@ -64,6 +64,8 @@ class AlternatingLeastSquares(StrReprBase):
                 self.k_factors,
                 n_iter_max=self.max_iterations,
                 mask=tensor_mask,
+                init="random",
+                tol=1e-10,
             )
         ## to resolve singular matrices issue by adding some gausian noise
         except:
@@ -74,6 +76,7 @@ class AlternatingLeastSquares(StrReprBase):
                 self.k_factors,
                 n_iter_max=self.max_iterations,
                 mask=tensor_mask,
+                init="random",
             )
         weights, factors = self.cp_tensor
         assert np.allclose(

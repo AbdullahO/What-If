@@ -23,6 +23,7 @@ class ALS(FillTensorBase):
         validation_split: Optional[float] = 0.1,
         verbose: Optional[bool] = True,
         min_singular_value: float = 1e-7,
+        k_factors=5,
     ):
         """
         Parameters
@@ -45,7 +46,9 @@ class ALS(FillTensorBase):
         validation_split : float
         fraction of data used for validation
         """
-        super().__init__(verbose=verbose, min_singular_value=min_singular_value)
+        super().__init__(
+            verbose=verbose, min_singular_value=min_singular_value, k_factors=k_factors
+        )
 
         self.ranks = ranks
         self.init = init

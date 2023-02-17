@@ -301,6 +301,7 @@ class SyntheticDataModule:
         trend_coeff=None,
         poly_trend=False,
         poly_coeff=None,
+        units_diversity=1,
     ):
         self._generate_factors(
             max_periods,
@@ -312,6 +313,7 @@ class SyntheticDataModule:
             poly_trend,
             poly_coeff,
             regimes=self.regimes,
+            units_diversity=units_diversity,
         )
         self.factors = self.U, self.T, self.I, self.M
 
@@ -357,6 +359,7 @@ class SyntheticDataModule:
                 ],
             )
         )
+
         for reg in regimes[1:]:
             tensor_r = tl.cp_to_tensor(
                 (
@@ -376,7 +379,7 @@ class SyntheticDataModule:
             for m in range(self.num_metrics):
                 min_, max_ = self.metrics_range[m]
                 tensor[:, :, :, m] -= self.tensor_min
-                tensor[:, :, :, m] /= self.tensor_max
+                tensor[:, :, :, m] /= self.tensor_max - self.tensor_min
                 tensor[:, :, :, m] *= max_ - min_
                 tensor[:, :, :, m] += min_
 
@@ -408,7 +411,7 @@ class SyntheticDataModule:
                 subpopulation, :, intervention_number, metric_index
             ] += effect_size * control - (c_eff_size - control)
             noise = (
-                0.01
+                0.00
                 * tensor.mean()
                 * np.random.normal(
                     size=tensor[
@@ -749,12 +752,14 @@ class SyntheticDataModule:
         poly_trend=False,
         poly_coeff=None,
         regimes=1,
+        units_diversity=1,
     ):
 
         # Generate factors for each regime
-        self.U = np.random.random([self.num_units, self.rank, regimes])
-        self.T = np.random.random([self.max_timesteps, self.rank]) - 0.5
-        self.I = 2 * np.random.random([self.num_interventions, self.rank, regimes]) - 2
+        self.U = np.random.randn(self.num_units, self.rank, regimes)
+        self.U = self.U * units_diversity
+        self.T = np.random.randn(self.max_timesteps, self.rank)
+        self.I = 2 * np.random.randn(self.num_interventions, self.rank, regimes)
         self.M = np.random.random([self.num_metrics, self.rank, regimes])
         if self.same_sub_space_regimes:
             rng = np.random.default_rng()
@@ -765,7 +770,7 @@ class SyntheticDataModule:
 
         # generate temporal factors
         if periodic:
-            self.time_factor_periods = 1 / (np.random.random(self.rank) * max_periods)
+            self.time_factor_periods = np.random.random(self.rank) * max_periods + 5
             self.time_factor_har_amps = (
                 np.random.random(self.rank) * (max_amp_har - min_amp_har) + min_amp_har
             )
@@ -802,25 +807,25 @@ class SyntheticDataModule:
             if reg == 0:
                 start = 0
             else:
-                start = self.regime_splits[reg-1]
-            if reg == regimes -1:
-                end = None 
+                start = self.regime_splits[reg - 1]
+            if reg == regimes - 1:
+                end = None
             else:
                 end = self.regime_splits[reg]
-                
-            tensor_max = tl.cp_to_tensor(
+
+            tensor = tl.cp_to_tensor(
                 (
                     np.ones(self.rank),
                     [
                         self.U[..., reg],
-                        self.T[ start: end, ...],
+                        self.T[start:end, ...],
                         self.I[..., reg],
                         self.M[..., reg],
                     ],
                 )
-            ).max()
-            self.tensor_max = max(tensor_max, self.tensor_max)
-        self.tensor_min = -1 * self.tensor_max
+            )
+            self.tensor_max = max(tensor.max(), self.tensor_max)
+            self.tensor_min = min(tensor.min(), self.tensor_min)
 
     def export(self, name, tensor, ss_df, dir=""):
         # create dir

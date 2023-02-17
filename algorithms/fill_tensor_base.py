@@ -41,7 +41,8 @@ class FillTensorBase(WhatIFAlgorithm):
         verbose: Optional[bool] = False,
         min_singular_value: float = 1e-7,
         full_training_time_steps: int = 20,
-        threshold_multiplier: int = 10
+        threshold_multiplier: int = 10,
+        k_factors: int = 5
     ) -> None:
 
         self.verbose = verbose
@@ -62,6 +63,7 @@ class FillTensorBase(WhatIFAlgorithm):
         self.current_regime_tensor: Optional[ndarray] = None
         self.threshold_multiplier: int = threshold_multiplier
         self.regimes: List[Regime] = []
+        self.k_factors = k_factors
 
     def check_model(self):
         error_message_base = " is None, have you called fit()?"
@@ -214,7 +216,7 @@ class FillTensorBase(WhatIFAlgorithm):
             self.tensor_nans = sparse.concatenate([old_tensor, tensor_nans], axis=1)
 
         # Apply Alternating Least Squares to decompose the tensor into CP form
-        als_model = ALS()
+        als_model = ALS(k_factors=self.k_factors)
 
         # Modifies tensor by filling nans with zeros
         als_model.fit(tensor_filled)
@@ -227,6 +229,7 @@ class FillTensorBase(WhatIFAlgorithm):
             * np.nanmean(np.square(tensor_compressed - tensor))
             / np.nanmean(np.square(tensor))
         )
+        self.compression_loss = np.nanmean(np.square(tensor_filled - tensor_compressed))
 
         # necessary post processing need for partial fit
         assert (
@@ -527,9 +530,9 @@ class FillTensorBase(WhatIFAlgorithm):
         current_regime = self.regimes[-1]
 
         if self.verbose:
-        print(
-            f"current regime: {current_regime.index}, started at: {current_regime.start_time}"
-        )
+            print(
+                f"current regime: {current_regime.index}, started at: {current_regime.start_time}"
+            )
 
         # check whether we have used enough data points to train the model
         ## None means it has reached full update state
@@ -545,7 +548,7 @@ class FillTensorBase(WhatIFAlgorithm):
 
         if partial_update:
             if self.verbose:
-            print("partial_update")
+                print("partial_update")
             # if so just update factors
             Y_new = self._compute_updated_factors(new_tensor, current_regime)
             distance_error = self._compute_drift(new_tensor, Y_new, current_regime)

@@ -32,8 +32,9 @@ class SNN(FillTensorBase):
         max_value: Optional[float] = None,
         verbose: bool = True,
         min_singular_value: float = 1e-7,
-        full_training_time_steps:int = 10,
-        threshold_multiplier:int = 10
+        full_training_time_steps: int = 10,
+        threshold_multiplier: int = 10,
+        k_factors: int = 5,
     ) -> None:
         """
         Parameters
@@ -73,7 +74,13 @@ class SNN(FillTensorBase):
 
         verbose : bool
         """
-        super().__init__(verbose=verbose, min_singular_value=min_singular_value, full_training_time_steps = full_training_time_steps, threshold_multiplier = threshold_multiplier)
+        super().__init__(
+            verbose=verbose,
+            min_singular_value=min_singular_value,
+            full_training_time_steps=full_training_time_steps,
+            threshold_multiplier=threshold_multiplier,
+            k_factors=k_factors,
+        )
         self.n_neighbors = n_neighbors
         self.weights = weights
         self.random_splits = random_splits

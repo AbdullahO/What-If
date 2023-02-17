@@ -36,7 +36,8 @@ class SNNBiclustering(SNN):
         num_estimates=3,
         seed=None,
         full_training_time_steps=10,
-        threshold_multiplier = 10
+        threshold_multiplier=10,
+        k_factors=5,
     ):
         """
         Parameters
@@ -103,7 +104,8 @@ class SNNBiclustering(SNN):
             verbose=verbose,
             min_singular_value=min_singular_value,
             full_training_time_steps=full_training_time_steps,
-            threshold_multiplier = threshold_multiplier
+            threshold_multiplier=threshold_multiplier,
+            k_factors=k_factors,
         )
         self.min_col_sparsity: float = min_col_sparsity
         self.min_row_sparsity: float = min_row_sparsity
@@ -230,7 +232,9 @@ class SNNBiclustering(SNN):
         self.mask = (~np.isnan(X)).astype(int)
 
         # get clusters:
-        self.min_num_clusters = int(np.sqrt(min(self.mask.shape)))
+        self.min_num_clusters = min(
+            int(np.sqrt(min(self.mask.shape))), self.min_num_clusters
+        )
         self._get_clusters()
 
         # set cluster matrices for finding best clusters
