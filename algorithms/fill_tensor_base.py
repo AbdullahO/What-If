@@ -527,9 +527,9 @@ class FillTensorBase(WhatIFAlgorithm):
         current_regime = self.regimes[-1]
 
         if self.verbose:
-        print(
-            f"current regime: {current_regime.index}, started at: {current_regime.start_time}"
-        )
+            print(
+                f"current regime: {current_regime.index}, started at: {current_regime.start_time}"
+            )
 
         # check whether we have used enough data points to train the model
         ## None means it has reached full update state
@@ -545,7 +545,7 @@ class FillTensorBase(WhatIFAlgorithm):
 
         if partial_update:
             if self.verbose:
-            print("partial_update")
+                print("partial_update")
             # if so just update factors
             Y_new = self._compute_updated_factors(new_tensor, current_regime)
             distance_error = self._compute_drift(new_tensor, Y_new, current_regime)
