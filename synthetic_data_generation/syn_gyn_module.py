@@ -252,7 +252,7 @@ class SyntheticDataModule:
             unit_cov (List[UnitCov], optional): list of unit covaraites. Defaults to None.
             int_cov (List[IntCov], optional): list of interventions covaraites. Defaults to None.
             rank (int, optional): rank of the produced tensor. Defaults to 2.
-            freq (str, optional): frequency of the time steps. If none, integers would be used. Defaults to None.
+            freq (str, optional): frequency of the time steps (i.e., 'D' for daily series, or 's' for secondbysecond series). If none, integers would be used. Defaults to None.
         """
         self.num_units = num_units
         self.max_timesteps = max_timesteps
@@ -753,7 +753,10 @@ class SyntheticDataModule:
 
         # Generate factors for each regime
         self.U = np.random.random([self.num_units, self.rank, regimes])
-        self.T = np.random.random([self.max_timesteps, self.rank]) - 0.5
+        if periodic or lin_tren or poly_trend:
+            self.T = np.zeros([self.max_timesteps, self.rank])
+        else:
+            self.T = np.random.random([self.max_timesteps, self.rank]) - 0.5
         self.I = 2 * np.random.random([self.num_interventions, self.rank, regimes]) - 2
         self.M = np.random.random([self.num_metrics, self.rank, regimes])
         if self.same_sub_space_regimes:
@@ -778,7 +781,6 @@ class SyntheticDataModule:
                     * np.pi
                     * self.time_factor_periods[r]
                     * np.arange(self.max_timesteps)
-                    / (self.max_timesteps)
                 )
         if lin_tren:
             if trend_coeff is None:
