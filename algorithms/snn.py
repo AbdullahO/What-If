@@ -33,7 +33,9 @@ class SNN(FillTensorBase):
         verbose: bool = True,
         min_singular_value: float = 1e-7,
         full_training_time_steps:int = 10,
-        threshold_multiplier:int = 10
+        threshold_multiplier:int = 10, 
+        L: Optional[int] = None, 
+        k_factors: Optional[int] = 5
     ) -> None:
         """
         Parameters
@@ -73,7 +75,10 @@ class SNN(FillTensorBase):
 
         verbose : bool
         """
-        super().__init__(verbose=verbose, min_singular_value=min_singular_value, full_training_time_steps = full_training_time_steps, threshold_multiplier = threshold_multiplier)
+        super().__init__(verbose=verbose, min_singular_value=min_singular_value, 
+                         full_training_time_steps = full_training_time_steps,
+                         threshold_multiplier = threshold_multiplier, L = L,
+                         k_factors = k_factors)
         self.n_neighbors = n_neighbors
         self.weights = weights
         self.random_splits = random_splits
@@ -107,13 +112,12 @@ class SNN(FillTensorBase):
         """
         complete missing entries in matrix
         """
-        N, T, I = X.shape
-        X = X.reshape([N, I * T])
-
+        # 
+        
         filled_matrix = self._snn_fit_transform(X, test_set)
         # reshape matrix into tensor
-        tensor = filled_matrix.reshape([N, T, I])
-        return tensor
+        
+        return filled_matrix
 
     def _snn_fit_transform(
         self, X: ndarray, test_set: Optional[ndarray] = None

@@ -9,7 +9,7 @@ from algorithms.snn import SNN
 from cachetools import cached
 from cachetools.keys import hashkey
 from numpy import ndarray
-from typing import Any, Iterator, List, Optional, Tuple, Union
+from typing import Optional
 
 
 class SNNBiclustering(SNN):
@@ -36,7 +36,9 @@ class SNNBiclustering(SNN):
         num_estimates=3,
         seed=None,
         full_training_time_steps=10,
-        threshold_multiplier = 10
+        threshold_multiplier = 10,
+        L = None, 
+        k_factors = 5
     ):
         """
         Parameters
@@ -103,7 +105,9 @@ class SNNBiclustering(SNN):
             verbose=verbose,
             min_singular_value=min_singular_value,
             full_training_time_steps=full_training_time_steps,
-            threshold_multiplier = threshold_multiplier
+            threshold_multiplier = threshold_multiplier, 
+            L = L, 
+            k_factors = k_factors
         )
         self.min_col_sparsity: float = min_col_sparsity
         self.min_row_sparsity: float = min_row_sparsity
@@ -117,6 +121,8 @@ class SNNBiclustering(SNN):
         self.num_estimates: int = num_estimates
         self.clusters_hashes: set = None
         self.seed: int = seed
+        self.matrix = None
+        self.mask = None
         if self.seed is None:
             np.random.seed()
             self.seed = np.random.randint(100)
@@ -222,10 +228,6 @@ class SNNBiclustering(SNN):
         """
         complete missing entries in matrix
         """
-        # tensor to matrix
-        N, T, I = X.shape
-        X = X.reshape([N, I * T])
-
         self.matrix = X
         self.mask = (~np.isnan(X)).astype(int)
 
@@ -240,14 +242,12 @@ class SNNBiclustering(SNN):
         ) = self._get_clusters_matrices()
         filled_matrix = self._snn_fit_transform(X, test_set)
 
-        # reshape matrix into tensor
-        tensor = filled_matrix.reshape(N, T, I)
-
+        
         # clear cache
         self._map_missing_value.cache.clear()
         self._get_beta_from_factors.cache.clear()
 
-        return tensor
+        return filled_matrix
 
     @cached(
         cache=dict(),  # type: ignore

@@ -7,7 +7,6 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import sparse
-import tensorly as tl
 from numpy import ndarray
 from sklearn.utils import check_array  # type: ignore
 
@@ -41,10 +40,13 @@ class FillTensorBase(WhatIFAlgorithm):
         verbose: Optional[bool] = False,
         min_singular_value: float = 1e-7,
         full_training_time_steps: int = 20,
-        threshold_multiplier: int = 10
+        threshold_multiplier: int = 10,
+        L: Optional[int] = None, 
+        k_factors: Optional[int] = 5
     ) -> None:
 
         self.verbose = verbose
+        self.L = L
         self.min_singular_value = min_singular_value
         self.actions_dict: Optional[dict] = None
         self.units_dict: Optional[dict] = None
@@ -62,6 +64,11 @@ class FillTensorBase(WhatIFAlgorithm):
         self.current_regime_tensor: Optional[ndarray] = None
         self.threshold_multiplier: int = threshold_multiplier
         self.regimes: List[Regime] = []
+        # init initial regime!
+        strating_regime = Regime(0, 0)
+        self.regimes.append(strating_regime)
+        self.k_factors : int = k_factors
+        
 
     def check_model(self):
         error_message_base = " is None, have you called fit()?"
@@ -175,8 +182,6 @@ class FillTensorBase(WhatIFAlgorithm):
         )
 
         # init initial regime
-        strating_regime = Regime(0, 0)
-        self.regimes.append(strating_regime)
         self._fit(tensor, 0)
 
     def _fit(self, tensor, regime_index):
@@ -184,43 +189,18 @@ class FillTensorBase(WhatIFAlgorithm):
         regime = self.regimes[regime_index]
 
         # fill tensor
-        tensor_filled = self._fit_transform(tensor)
+        N, T, I = tensor.shape
+        X = self._tensor_to_matrix(tensor, N, T, I)
 
-        tensor_nans = sparse.COO.from_numpy(np.isnan(tensor_filled))
-        # new tensor_nan !
-        if self.tensor_nans is None:
-            self.tensor_nans = tensor_nans
-        # append to old tensor based on regime start time
-        else:
-            regime_start = regime.start_time
-            old_tensor_coords = self.tensor_nans.coords
-            old_shape = (
-                self.tensor_nans.shape[0],
-                regime_start,
-                self.tensor_nans.shape[2],
-            )
-            indices = [
-                i for i, t in enumerate(old_tensor_coords[1]) if t < regime_start
-            ]
-            data = self.tensor_nans.data[indices]
-            coords = [
-                self.tensor_nans.coords[0][indices],
-                self.tensor_nans.coords[1][indices],
-                self.tensor_nans.coords[2][indices],
-            ]
-            old_tensor = sparse.COO(
-                coords=coords, data=data, shape=old_shape, sorted=True
-            )
-            self.tensor_nans = sparse.concatenate([old_tensor, tensor_nans], axis=1)
-
+        filled_matrix = self._fit_transform(X)
+        tensor_filled = self._matrix_to_tensor(filled_matrix, N, T, I)
+        
+        self.tensor_nans = self._update_tensor_nans(tensor_filled, regime)
+        
         # Apply Alternating Least Squares to decompose the tensor into CP form
-        als_model = ALS()
-
-        # Modifies tensor by filling nans with zeros
-        als_model.fit(tensor_filled)
-
-        # Only save the ALS output tensors
-        regime.tensor_cp_factors = als_model.cp_factors
+        regime.tensor_cp_factors = self._compress_tesnor(tensor_filled)
+        
+        # calculate mean error to detect drift
         tensor_compressed = self.get_tensor_from_factors(regime)
         regime.mean_drift = (
             2
@@ -228,7 +208,7 @@ class FillTensorBase(WhatIFAlgorithm):
             / np.nanmean(np.square(tensor))
         )
 
-        # necessary post processing need for partial fit
+        # necessary post processing needed for partial fit
         assert (
             regime.tensor_cp_factors is not None
         ), "self.tensor_cp_factors is None, check ALS model fit"
@@ -251,6 +231,14 @@ class FillTensorBase(WhatIFAlgorithm):
             )
             self.cusum = self.cusum[: regime.start_time]
             self.cusum = np.concatenate([self.cusum, np.zeros(tensor.shape[1])])
+        
+        # forecasting time factors
+        ## TODO: 1. learn forecasting models for each regime
+        #  TODO: 1.a) add mSSA module
+        #  TODO: 1.b) create a fit_forecasting to fit a linear model for all factors (indivdually)
+        #  TODO: 1.b.i) store linear model
+        #  TODO: 1.c) create a predict function that returns temporal factors at time t > self.T
+        
 
     def query(
         self,
@@ -348,6 +336,35 @@ class FillTensorBase(WhatIFAlgorithm):
             tensor[mask] = np.nan
         return tensor
 
+    def _update_tensor_nans(self, tensor_filled, regime):
+        tensor_nans = sparse.COO.from_numpy(np.isnan(tensor_filled))
+        # new tensor_nan !
+        if self.tensor_nans is None:
+            return tensor_nans
+        # append to old tensor based on regime start time
+        else:
+            regime_start = regime.start_time
+            old_tensor_coords = self.tensor_nans.coords
+            old_shape = (
+                self.tensor_nans.shape[0],
+                regime_start,
+                self.tensor_nans.shape[2],
+            )
+            indices = [
+                i for i, t in enumerate(old_tensor_coords[1]) if t < regime_start
+            ]
+            data = self.tensor_nans.data[indices]
+            coords = [
+                self.tensor_nans.coords[0][indices],
+                self.tensor_nans.coords[1][indices],
+                self.tensor_nans.coords[2][indices],
+            ]
+            old_tensor = sparse.COO(
+                coords=coords, data=data, shape=old_shape, sorted=True
+            )
+            return sparse.concatenate([old_tensor, tensor_nans], axis=1)
+
+
     def _get_metric_matrix(
         self, df: pd.DataFrame, unit_column: str, time_column: str, metric: str
     ) -> pd.DataFrame:
@@ -372,6 +389,39 @@ class FillTensorBase(WhatIFAlgorithm):
         ).values
         return current_true_intervention_assignment_matrix
 
+    def _tensor_to_matrix(self, X, N, T, I):
+        if self.L:
+            return self.pagify(X, self.L, N, T, I)
+        else:
+            return self.pagify(X, 1, N, T, I)
+        
+    def _matrix_to_tensor(self, X, N, T, I):
+        if self.L:
+            return self.unpagify(X, self.L, N, T, I)
+        else:
+            return self.unpagify(X, 1, N, T, I)
+        
+    @staticmethod
+    
+    def pagify(tensor, L,  N, T, I):
+        m = T//L
+        assert T%L == 0, "choose L that is multiple of T"
+        pagified_tensor = np.zeros([L*N, m*I])
+        for n in range(N):
+            series = tensor[n,:,:,0]
+            pagified = series.reshape([L, m*I], order = "F")
+            pagified_tensor[L*n:L*(n+1),:] = pagified
+        return pagified_tensor
+    
+    @staticmethod
+    def unpagify(matrix, L, N, T, I):
+        tensor = np.zeros([N, T, I, 1])
+        for n in range(N):
+            series = matrix[L*n:L*(n+1),:].reshape([T,I], order = "F")
+            tensor[n, :,:, 0] = series
+        return tensor
+
+        
     def _process_input_df(
         self,
         df: pd.DataFrame,
@@ -474,6 +524,17 @@ class FillTensorBase(WhatIFAlgorithm):
         )
 
         return tensor
+
+    def _compress_tesnor(self, tensor):
+        # Apply Alternating Least Squares to decompose the tensor into CP form
+        als_model = ALS(k_factors= self.k_factors)
+
+        # Modifies tensor by filling nans with zeros
+        als_model.fit(tensor)
+
+        # Only save the ALS output tensors
+        return als_model.cp_factors
+
 
     @staticmethod
     def _populate_tensor(N, T, I, metric_df, assignment_matrix):
