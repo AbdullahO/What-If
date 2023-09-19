@@ -416,7 +416,7 @@ class SyntheticDataModule:
                     ].shape
                 )
             )
-            tensor[subpopulation, :, intervention_number, metric_index] += noise
+            # tensor[subpopulation, :, intervention_number, metric_index] += noise
         return tensor
 
     def auto_subsample(self, periods, tensor, df):

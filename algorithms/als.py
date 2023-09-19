@@ -67,7 +67,7 @@ class AlternatingLeastSquares(StrReprBase):
             )
         ## to resolve singular matrices issue by adding some gausian noise
         except:
-            print("exception!")
+            print("warning, the approximation may not be perfect due to noise added for stability!")
             tensor_adjusted = tensor + 1e-2 * tensor.mean() * np.random.randn(N, T, I)
             self.cp_tensor = tl.decomposition.parafac(
                 tensor_adjusted,
