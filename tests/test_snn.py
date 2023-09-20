@@ -198,7 +198,7 @@ def snn_model_matrix_full(snn_model: SNN) -> ndarray:
     T = len(model_tuple.time_dict)
     I = len(model_tuple.actions_dict)
     regime = snn_model.regimes[0]
-    tensor = snn_model.get_tensor_from_factors(regime)
+    tensor = snn_model.get_tensor_from_factors(regime.tensor_cp_factors)
     if snn_model.tensor_nans is not None:
         mask = snn_model.tensor_nans.todense()
         tensor[mask] = np.nan
@@ -269,10 +269,10 @@ def test_split(snn_model: SNN, expected_anchor_rows: ndarray, k: int):
 
 def test_model_str(snn_model: SNN):
     assert str(snn_model) == (
-        "SNN(covariates=None, current_regime_tensor=None, full_training_time_steps=10,"
-        " linear_span_eps=0.1, max_rank=None, max_value=None,"
+        "SNN(L=None, covariates=None, current_regime_tensor=None, full_training_time_steps=10,"
+        " k_factors=5, linear_span_eps=0.1, max_rank=None, max_value=None,"
         " metric='sales', min_singular_value=1e-07, min_value=None,"
-        " n_neighbors=1, random_splits=False, spectral_t=None, subspace_eps=0.1,"
+        " n_neighbors=1, num_lags_forecasting=10, random_splits=False, spectral_t=None, subspace_eps=0.1,"
         " threshold_multiplier=10, time_column='time', unit_column='unit_id', verbose=False, weights='uniform')"
     )
 
@@ -620,6 +620,7 @@ def check_model_output(snn_model: SNN, snn_expected_query_output: pd.DataFrame):
         "ad 0",
         ["2020-01-10", " 2020-02-19"],
     )
+
     assert snn_expected_query_output.round(5).equals(
         model_query_output.round(5)
     ), "Query output difference"
