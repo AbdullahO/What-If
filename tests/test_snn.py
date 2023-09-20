@@ -257,6 +257,12 @@ def test_predict(
     assert prediction.round(6) == 43785.385902, "prediction has changed"
 
 
+def test_forecast(snn_model: SNN):
+    """Test the _predict function"""
+    df_forecast = snn_model.forecast([0], 3, "sales", "ad 0")
+    assert df_forecast.shape == (1, 3), df_forecast.shape
+
+
 @pytest.mark.parametrize("k", [2, 4, 5])
 def test_split(snn_model: SNN, expected_anchor_rows: ndarray, k: int):
     anchor_rows_splits = list(snn_model._split(expected_anchor_rows, k=k))

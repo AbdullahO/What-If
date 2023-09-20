@@ -247,9 +247,9 @@ class FillTensorBase(WhatIFAlgorithm):
 
         # init models
         kargs = {"numSeries": 1, "numCoefs": self.num_lags_forecasting, "arOrder": 0}
-        regime.foreacsting_model = [MSSA(**kargs) for _ in range(self.k_factors)]
+        regime.forecasting_model = [MSSA(**kargs) for _ in range(self.k_factors)]
         for factor in range(self.k_factors):
-            regime.foreacsting_model[factor].fit(
+            regime.forecasting_model[factor].fit(
                 temporal_factors[:, factor : factor + 1]
             )
 
@@ -349,16 +349,46 @@ class FillTensorBase(WhatIFAlgorithm):
             tensor[mask] = np.nan
         return tensor
 
+    def forecast(
+        self,
+        units: List[int],
+        steps_ahead: int,
+        metric: str,
+        action: str,
+    ) -> pd.DataFrame:
+        """returns answer to what if query"""
+        # checo model
+        model_tuple = self.check_model()
+        units_dict = model_tuple.units_dict
+        actions_dict = model_tuple.actions_dict
+
+        # Get the units, time, action, and action_time_range indices
+        unit_idx = [units_dict[u] for u in units]
+
+        tensor = self._forecast_tensor(unit_idx=unit_idx, steps_ahead=steps_ahead)
+
+        # get action idx
+        action_idx = actions_dict[action]
+
+        selected_matrix = tensor[:, :, action_idx]
+
+        # return unit X time DF
+        # for now, we just return how the index of the steps and not the timestamps, for which we will need to
+        # learn the frequency of the observations and extrapolate it
+        timesteps = np.arange(self.T, self.T + steps_ahead)
+        out_df = pd.DataFrame(data=selected_matrix, index=units, columns=timesteps)
+        return out_df
+
     def _forecast_tensor(self, unit_idx, steps_ahead):
         # regime is "always" the latest one when we forecast
         regime = self.regimes[-1]
 
         # step one: forecast factors (get steps_ahead X k_factors x )
-        temporal_factors_forecasted = np.zeros(steps_ahead, self.k_factors)
+        temporal_factors_forecasted = np.zeros([steps_ahead, self.k_factors])
         for k in range(self.k_factors):
-            temporal_factors_forecasted[:, k] = regime.forecasting_model[k].predict(
-                numSteps=steps_ahead
-            )
+            temporal_factors_forecasted[:, k : k + 1] = regime.forecasting_model[
+                k
+            ].predict(numSteps=steps_ahead)
         # step two: get the right tensor for regime and use get_tensor_from_factors
         factors = [
             regime.tensor_cp_factors[0],
