@@ -294,6 +294,7 @@ class SyntheticDataModule:
     def generate_init_factors(
         self,
         max_periods=50,
+        min_periods=4,
         max_amp_har=1,
         min_amp_har=-1,
         periodic=True,
@@ -304,6 +305,7 @@ class SyntheticDataModule:
     ):
         self._generate_factors(
             max_periods,
+            min_periods,
             max_amp_har,
             min_amp_har,
             periodic,
@@ -340,7 +342,7 @@ class SyntheticDataModule:
         ]
         return regimes
 
-    def generate(self, time_range):
+    def generate(self, time_range, std=0.1):
         t0, t1 = time_range
         # select regimes
         regimes = self._get_regimes(t0, t1)
@@ -386,8 +388,17 @@ class SyntheticDataModule:
         if self.unit_cov:
             df = self._generate_int_cov(df)
         tensor = self._genereate_effects(tensor)
+        # add observation noise
+        tensor_noisy = self._add_noise(tensor, std * tensor.mean())
         df = self._add_metrics(df, tensor)
-        return tensor, df
+        return tensor, df, tensor_noisy
+
+    @staticmethod
+    def _add_noise(tensor, std):
+        print(tensor.shape)
+        noise = np.random.normal(0, std, size=tensor.shape)
+        print(noise.shape)
+        return tensor + noise
 
     def _genereate_effects(self, tensor):
         for effect in self.effects:
@@ -420,7 +431,6 @@ class SyntheticDataModule:
         return tensor
 
     def auto_subsample(self, periods, tensor, df):
-
         """
         return intervention assignments (num_units x num_timesteps) and mask for
         observations (num_units x num_timesteps) then use sample to generate df_ss and tesnor_ss
@@ -467,7 +477,6 @@ class SyntheticDataModule:
         return ss_tensor, ss_df
 
     def sample(self, intervention_assignments, observation_mask, tensor, df):
-
         intervention_assignments = intervention_assignments.flatten()
         T = tensor.shape[1]
         # subsample tensor intervention
@@ -741,6 +750,7 @@ class SyntheticDataModule:
     def _generate_factors(
         self,
         max_periods=50,
+        min_periods=4,
         max_amp_har=1,
         min_amp_har=0,
         periodic=True,
@@ -750,14 +760,13 @@ class SyntheticDataModule:
         poly_coeff=None,
         regimes=1,
     ):
-
         # Generate factors for each regime
-        self.U = np.random.random([self.num_units, self.rank, regimes])
+        self.U = np.random.random([self.num_units, self.rank, regimes]) - 0.5
         if periodic or lin_tren or poly_trend:
             self.T = np.zeros([self.max_timesteps, self.rank])
         else:
             self.T = np.random.random([self.max_timesteps, self.rank]) - 0.5
-        self.I = 2 * np.random.random([self.num_interventions, self.rank, regimes]) - 2
+        self.I = 2 * np.random.random([self.num_interventions, self.rank, regimes]) - 1
         self.M = np.random.random([self.num_metrics, self.rank, regimes])
         if self.same_sub_space_regimes:
             rng = np.random.default_rng()
@@ -768,7 +777,9 @@ class SyntheticDataModule:
 
         # generate temporal factors
         if periodic:
-            self.time_factor_periods = 1 / (np.random.random(self.rank) * max_periods)
+            self.time_factor_periods = 1 / (
+                np.random.random(self.rank) * (max_periods - min_periods) + min_periods
+            )
             self.time_factor_har_amps = (
                 np.random.random(self.rank) * (max_amp_har - min_amp_har) + min_amp_har
             )
@@ -804,18 +815,18 @@ class SyntheticDataModule:
             if reg == 0:
                 start = 0
             else:
-                start = self.regime_splits[reg-1]
-            if reg == regimes -1:
-                end = None 
+                start = self.regime_splits[reg - 1]
+            if reg == regimes - 1:
+                end = None
             else:
                 end = self.regime_splits[reg]
-                
+
             tensor_max = tl.cp_to_tensor(
                 (
                     np.ones(self.rank),
                     [
                         self.U[..., reg],
-                        self.T[ start: end, ...],
+                        self.T[start:end, ...],
                         self.I[..., reg],
                         self.M[..., reg],
                     ],
