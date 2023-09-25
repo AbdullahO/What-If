@@ -19,10 +19,11 @@ metrics = [metric1]
 num_interventions = 3
 # initalize and generate
 data = SyntheticDataModule(num_units, num_timesteps, num_interventions, metrics)
-data.generate()
+data.generate_init_factors()
+tensor, df, _ = data.generate([0,num_timesteps -1 ])
 # subsample
 assignment = {"intervention_assignment": "random", "until": num_timesteps,}
-data.auto_subsample([assignment])
+tensor_ss, df_ss = data.auto_subsample([assignment], tensor, df)
 ```
 Then you can see the genenrated data through
 
@@ -36,7 +37,7 @@ data.ss_tensor
 
  ```
 
- See `generate_data.ipynb` for a more complicated example where you can:
+ See `generate_data.ipynb` for a more involved example where you can:
  1. Add unit covariates
  2. Add interventions covariates
  3. Add interventions effects based on different subpopulations

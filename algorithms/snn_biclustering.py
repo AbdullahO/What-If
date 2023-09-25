@@ -36,9 +36,10 @@ class SNNBiclustering(SNN):
         num_estimates=3,
         seed=None,
         full_training_time_steps=10,
-        threshold_multiplier = 10,
-        L = None, 
-        k_factors = 5
+        threshold_multiplier=10,
+        L=None,
+        k_factors=5,
+        num_lags_forecasting=10,
     ):
         """
         Parameters
@@ -105,9 +106,10 @@ class SNNBiclustering(SNN):
             verbose=verbose,
             min_singular_value=min_singular_value,
             full_training_time_steps=full_training_time_steps,
-            threshold_multiplier = threshold_multiplier, 
-            L = L, 
-            k_factors = k_factors
+            threshold_multiplier=threshold_multiplier,
+            L=L,
+            k_factors=k_factors,
+            num_lags_forecasting=num_lags_forecasting,
         )
         self.min_col_sparsity: float = min_col_sparsity
         self.min_row_sparsity: float = min_row_sparsity
@@ -242,7 +244,6 @@ class SNNBiclustering(SNN):
         ) = self._get_clusters_matrices()
         filled_matrix = self._snn_fit_transform(X, test_set)
 
-        
         # clear cache
         self._map_missing_value.cache.clear()
         self._get_beta_from_factors.cache.clear()
@@ -282,7 +283,6 @@ class SNNBiclustering(SNN):
         return selected_cluster, obs_rows_vector, obs_cols_vector
 
     def _predict(self, X, missing_pair):
-
         i, j = missing_pair
         obs_rows = np.argwhere(~np.isnan(X[:, j])).flatten()
         obs_cols = np.argwhere(~np.isnan(X[i, :])).flatten()
@@ -308,7 +308,6 @@ class SNNBiclustering(SNN):
         if len(selected_clusters) == 0:
             return np.nan, False
         for clus in selected_clusters:
-
             # get minimal anchor rows and cols
             rows_cluster = self.clusters_row_matrix[clus, :]
             cols_cluster = self.clusters_col_matrix[clus, :]

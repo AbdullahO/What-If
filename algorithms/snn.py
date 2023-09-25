@@ -32,10 +32,11 @@ class SNN(FillTensorBase):
         max_value: Optional[float] = None,
         verbose: bool = True,
         min_singular_value: float = 1e-7,
-        full_training_time_steps:int = 10,
-        threshold_multiplier:int = 10, 
-        L: Optional[int] = None, 
-        k_factors: Optional[int] = 5
+        full_training_time_steps: int = 10,
+        threshold_multiplier: int = 10,
+        L: Optional[int] = None,
+        k_factors: Optional[int] = 5,
+        num_lags_forecasting: int = 10,
     ) -> None:
         """
         Parameters
@@ -75,10 +76,15 @@ class SNN(FillTensorBase):
 
         verbose : bool
         """
-        super().__init__(verbose=verbose, min_singular_value=min_singular_value, 
-                         full_training_time_steps = full_training_time_steps,
-                         threshold_multiplier = threshold_multiplier, L = L,
-                         k_factors = k_factors)
+        super().__init__(
+            verbose=verbose,
+            min_singular_value=min_singular_value,
+            full_training_time_steps=full_training_time_steps,
+            threshold_multiplier=threshold_multiplier,
+            L=L,
+            k_factors=k_factors,
+            num_lags_forecasting=num_lags_forecasting,
+        )
         self.n_neighbors = n_neighbors
         self.weights = weights
         self.random_splits = random_splits
@@ -112,11 +118,11 @@ class SNN(FillTensorBase):
         """
         complete missing entries in matrix
         """
-        # 
-        
+        #
+
         filled_matrix = self._snn_fit_transform(X, test_set)
         # reshape matrix into tensor
-        
+
         return filled_matrix
 
     def _snn_fit_transform(
@@ -135,7 +141,7 @@ class SNN(FillTensorBase):
         X, X_imputed = self._initialize(X, missing_set)
 
         # complete missing entries
-        for (i, missing_pair) in enumerate(missing_set):
+        for i, missing_pair in enumerate(missing_set):
             if self.verbose:
                 print("[SNN] iteration {} of {}".format(i + 1, num_missing))
 
@@ -370,7 +376,6 @@ class SNN(FillTensorBase):
         return (pred, feasible, weight)
 
     def _update_nan_mask(self, new_tensor):
-
         assert (
             self.tensor_nans is not None
         ), "self.tensor_nans is None, have you called fit()?"
@@ -408,7 +413,7 @@ class SNN(FillTensorBase):
             feasible_arr = np.zeros(self.n_neighbors)
             weights = np.zeros(self.n_neighbors)
             # iterate through all row splits
-            for (k, anchor_rows_k) in enumerate(anchor_rows_splits):
+            for k, anchor_rows_k in enumerate(anchor_rows_splits):
                 _pred, _feasible, _weight = self._synth_neighbor(
                     X,
                     missing_pair=missing_pair,
