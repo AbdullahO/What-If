@@ -11,3 +11,67 @@ This package integrates ideas from different research papers such as:
 5. **SAMoSSA: Multivariate Singular Spectrum Analysis with Stochastic Autoregressive Noise**, by Abdullah Alomar, Munther Dahleh, Sean Mann, Devavrat Shah. ([link](https://arxiv.org/pdf/2305.16491.pdf))
 
 
+## Getting started
+
+Assume access to a dataframe of the form 
+
+| datetime | unit | action     | metric | covariate |
+| -------- | ---- | ---------- | ------ | --------- |
+| 1/1/2020 | 1    | "action 0" | 0.1    | 0         |
+| 2/1/2020 | 1    | "action 1" | 2      | 1         |
+| 1/1/2020 | 2    | "action 0" | 4      | 1         |
+
+where $N$ units are observed in $T$ timesteps under $D$ different actions and interventions. The What-if tool allows you to answer counterfactual question about any unit at any time (in the past) under any intervention. Further, it allows you to forecast your metric for any unit under any intervention. 
+
+To get started, import and fit the model on the dataframe as follows
+
+```python
+from whatIf.algorithms.snn import SNN
+model = SNN(verbose=False, L = 4, k_factors=8, num_lags_forecasting= 60)
+
+
+model.fit(
+          # first input is the dataframe
+          df= df, 
+          # for unit_column choose the column name in df with the unique identifier for units (unit in this data)
+          unit_column="unit",
+          # for time_column choose the column name in df with the timestamps (datetime in this data)
+          time_column="datetime",
+          # for metrics choose the column name in df with the metric measurements (metric1 in this data)
+          metrics = ["metric1"],
+          # for actions choose the column(s) name in df indicating the intervention (action in this data)
+          actions = ["action"]
+)
+
+```
+
+
+Then use `query` to answer counterfactual questions
+
+```python
+df_query = model.query(
+            # which unit(s) to query?
+            units= [0], 
+            # time frame to query?
+            time = ["2020-01-20", "2020-02-20"],
+            # metric and action to query
+            metric= 'sales', action= 'action 0', 
+            # time range at which the selected action should be assigned (for other timesteps,  the observed action will be assigned)
+            action_time_range=["2020-01-20", "2020-02-20"])
+```
+
+
+And use `forecast` to forrecast!
+
+```python
+# forecat 10 steps ahead
+forecast = model.forecast(
+            units= [0], 
+            steps_ahead = 10,
+            metric= 'sales', action= 'action 0', 
+            )
+```
+
+## Examples
+
+See the product sales example ([here](https://github.com/AbdullahO/whatIf/blob/main/Example/product%20sales/product%20sales%20example.ipynb)).
