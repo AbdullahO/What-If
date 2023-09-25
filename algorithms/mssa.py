@@ -8,9 +8,12 @@ from .util import (
     learnAR,
     leastSquares,
     truncatedSVD,
-    lowestMultiple,
     donohoRank,
     energyRank,
+    hankelize,
+    unhankelize,
+    pagify,
+    unpagify,
 )
 
 
@@ -46,6 +49,7 @@ class MSSA(TimeSeriesModel):
         rank: Optional[int] = None,
         rankEst: str = "donoho",
         arOrder: Optional[Union[int, List[int]]] = None,
+        page: bool = True,
     ) -> None:
         super().__init__()
         if rank is None:
@@ -68,6 +72,7 @@ class MSSA(TimeSeriesModel):
             self.arOrder = None
         self.maxOrder = max(1, max(self.arOrder)) if self.arOrder is not None else None
         self.fitted = False
+        self.page = page
 
     @staticmethod
     def updatable() -> bool:
@@ -83,33 +88,65 @@ class MSSA(TimeSeriesModel):
             series.shape[1] == self.numSeries
         ), f"Expected {self.numSeries} time series!"
 
+    def _ts_to_matrix(self, series):
+        if self.page:
+            return pagify(series, self.numPageRows)
+        else:
+            return hankelize(series, self.numPageRows)
+
+    def _matrix_to_ts(self, matrix):
+        if self.page:
+            return unpagify(matrix)
+        else:
+            return unhankelize(matrix)
+
+    def _filter_nan_columns(self, page):
+        nan_mask = np.isnan(page)
+        col_sparsity_ratio = np.sum(nan_mask, 0) / nan_mask.shape[0]
+        return page[:, col_sparsity_ratio < 0.3]
+
     def fit(self, series: NDArray) -> TimeSeriesModel:
         assert not self.fitted, "Model already fitted!"
         self._check_dims(series)
 
         # Truncate time series to multiple of L, then form page matrix
         numSteps = series.shape[0]
-        truncatedSteps = lowestMultiple(numSteps, self.numPageRows)
-        page = series[:truncatedSteps].reshape(self.numPageRows, -1, order="F")
+        page = self._ts_to_matrix(series)
+        truncatedSteps = page.size
+
+        # get a filtered matrix with only non-zero columns to learn coeffs
+        pageFiltered = self._filter_nan_columns(page)
+
+        # nan to zero
+        rho = 1 - np.isnan(page).sum() / page.size
+        page[np.isnan(page)] = 0
+        rho_filtered = 1 - np.isnan(pageFiltered).sum() / pageFiltered.size
+        pageFiltered[np.isnan(pageFiltered)] = 0
 
         # Denoise the page matrix, then fit the betas
         if self.rank is None:
             if self.rankEst == "donoho":
-                self.rank = donohoRank(page)
+                self.rank = donohoRank(pageFiltered)
             elif self.rankEst == "energy":
-                self.rank = energyRank(page)
+                self.rank = energyRank(pageFiltered)
             else:
                 self.rank = 5
-        self.denoisedPage = truncatedSVD(page, self.rank)
-        self.coefs = leastSquares(self.denoisedPage[:-1].T, self.denoisedPage[-1])
+
+        self.denoisedPage = (1 / rho) * truncatedSVD(page, self.rank)
+        self.denoisedPageFiltered = (1 / rho_filtered) * truncatedSVD(
+            pageFiltered, self.rank
+        )
+
+        self.coefs = leastSquares(
+            self.denoisedPageFiltered[:-1].T, self.denoisedPageFiltered[-1]
+        )
+        estimated_series = self._matrix_to_ts(self.denoisedPage)
 
         if self.arOrder is not None:
             assert self.maxOrder is not None
             # Recover the stationary process, then fit AR coefficients for each series
             self.arCoefs = np.zeros((self.maxOrder, self.numSeries))
-            extractedNoise = series[:truncatedSteps] - self.denoisedPage.reshape(
-                truncatedSteps, -1, order="F"
-            )
+            extractedNoise = series[:truncatedSteps] - estimated_series
             for i in range(self.numSeries):
                 if self.arOrder[i] > 0:
                     self.arCoefs[-self.arOrder[i] :, i] = learnAR(

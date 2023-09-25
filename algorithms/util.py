@@ -2,6 +2,28 @@ import numpy as np
 from numpy.typing import NDArray
 from itertools import product
 from typing import Dict
+from scipy.linalg import hankel
+
+
+def unhankelize(x):
+    """Average antidiagonal elements of a 2d array"""
+    x1d = [np.mean(x[::-1, :].diagonal(i)) for i in range(-x.shape[0] + 1, x.shape[1])]
+    return np.array(x1d)
+
+
+def hankelize(ts, L):
+    return hankel(ts[:L], ts[L - 1 :])
+
+
+def pagify(ts, L):
+    """turn series to Page matrix"""
+    numSteps = ts.shape[0]
+    truncatedSteps = lowestMultiple(numSteps, L)
+    return ts[:truncatedSteps].reshape(L, -1, order="F")
+
+
+def unpagify(x):
+    return x.reshape(x.size, -1, order="F")
 
 
 def lowestMultiple(target: int, base: int) -> int:

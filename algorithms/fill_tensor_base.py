@@ -71,6 +71,7 @@ class FillTensorBase(WhatIFAlgorithm):
         strating_regime = Regime(0, 0)
         self.regimes.append(strating_regime)
         self.k_factors: int = k_factors
+        self.temporal_certainity_th = 0.5
 
     def check_model(self):
         error_message_base = " is None, have you called fit()?"
@@ -246,12 +247,23 @@ class FillTensorBase(WhatIFAlgorithm):
         ), temporal_factors.shape
 
         # init models
-        kargs = {"numSeries": 1, "numCoefs": self.num_lags_forecasting, "arOrder": 0}
+        kargs = {
+            "numSeries": 1,
+            "numCoefs": self.num_lags_forecasting,
+            "arOrder": 0,
+            "page": False,
+        }
         regime.forecasting_model = [MSSA(**kargs) for _ in range(self.k_factors)]
+
+        # which temporal estimates should be uncertain?
+        max_size = self.tensor_nans.shape[0] * self.tensor_nans.shape[2]
+        sparsity_time = (self.tensor_nans == 0).sum([0, 2]).todense() / max_size
         for factor in range(self.k_factors):
-            regime.forecasting_model[factor].fit(
-                temporal_factors[:, factor : factor + 1]
-            )
+            # remove uncertain estimates
+            series = np.array(temporal_factors[:, factor : factor + 1])
+            series[sparsity_time < self.temporal_certainity_th] = np.nan
+            # fit
+            regime.forecasting_model[factor].fit(series)
 
     def query(
         self,

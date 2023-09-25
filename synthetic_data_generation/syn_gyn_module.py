@@ -302,6 +302,7 @@ class SyntheticDataModule:
         trend_coeff=None,
         poly_trend=False,
         poly_coeff=None,
+        periods=None,
     ):
         self._generate_factors(
             max_periods,
@@ -314,6 +315,7 @@ class SyntheticDataModule:
             poly_trend,
             poly_coeff,
             regimes=self.regimes,
+            periods=periods,
         )
         self.factors = self.U, self.T, self.I, self.M
 
@@ -389,8 +391,8 @@ class SyntheticDataModule:
             df = self._generate_int_cov(df)
         tensor = self._genereate_effects(tensor)
         # add observation noise
-        tensor_noisy = self._add_noise(tensor, std * tensor.mean())
-        df = self._add_metrics(df, tensor)
+        tensor_noisy = self._add_noise(tensor, std * tensor.std())
+        df = self._add_metrics(df, tensor_noisy)
         return tensor, df, tensor_noisy
 
     @staticmethod
@@ -759,14 +761,22 @@ class SyntheticDataModule:
         poly_trend=False,
         poly_coeff=None,
         regimes=1,
+        periods=None,
     ):
+        if periods is not None:
+            periods = np.array(periods)
+            assert len(periods) == self.rank, len(periods)
+        else:
+            periods = (
+                np.random.random(self.rank) * (max_periods - min_periods) + min_periods
+            )
         # Generate factors for each regime
         self.U = np.random.random([self.num_units, self.rank, regimes]) - 0.5
         if periodic or lin_tren or poly_trend:
             self.T = np.zeros([self.max_timesteps, self.rank])
         else:
             self.T = np.random.random([self.max_timesteps, self.rank]) - 0.5
-        self.I = 2 * np.random.random([self.num_interventions, self.rank, regimes]) - 1
+        self.I = 2 * np.random.random([self.num_interventions, self.rank, regimes])
         self.M = np.random.random([self.num_metrics, self.rank, regimes])
         if self.same_sub_space_regimes:
             rng = np.random.default_rng()
@@ -777,9 +787,7 @@ class SyntheticDataModule:
 
         # generate temporal factors
         if periodic:
-            self.time_factor_periods = 1 / (
-                np.random.random(self.rank) * (max_periods - min_periods) + min_periods
-            )
+            self.time_factor_periods = 1 / (periods)
             self.time_factor_har_amps = (
                 np.random.random(self.rank) * (max_amp_har - min_amp_har) + min_amp_har
             )
@@ -800,7 +808,7 @@ class SyntheticDataModule:
                 )
             self.trend_coeff = trend_coeff
             for r in range(self.rank):
-                self.T[:, r] += self.trend_coeff * np.arange(self.max_timesteps)
+                self.T[:, r] += self.trend_coeff[r] * np.arange(self.max_timesteps)
         if poly_trend:
             if poly_coeff is None:
                 poly_coeff = (

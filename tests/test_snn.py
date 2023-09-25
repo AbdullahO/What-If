@@ -278,7 +278,7 @@ def test_model_str(snn_model: SNN):
         "SNN(L=None, covariates=None, current_regime_tensor=None, full_training_time_steps=10,"
         " k_factors=5, linear_span_eps=0.1, max_rank=None, max_value=None,"
         " metric='sales', min_singular_value=1e-07, min_value=None,"
-        " n_neighbors=1, num_lags_forecasting=10, random_splits=False, spectral_t=None, subspace_eps=0.1,"
+        " n_neighbors=1, num_lags_forecasting=10, random_splits=False, spectral_t=None, subspace_eps=0.1, temporal_certainity_th=0.5,"
         " threshold_multiplier=10, time_column='time', unit_column='unit_id', verbose=False, weights='uniform')"
     )
 
@@ -367,8 +367,8 @@ def test_get_anchors(
 
     _obs_rows = np.array(list(obs_rows), dtype=int)
     _obs_cols = np.array(list(obs_cols), dtype=int)
-    B = snn_model_matrix_full[_obs_rows]
-    B = B[:, _obs_cols]
+    B = snn_model_matrix_full[anchor_rows]
+    B = B[:, anchor_cols]
     assert not np.any(np.isnan(B)), "snn_model_matrix_full: B contains NaN"
 
     # Test matrix_full, which should short circuit and return the input
